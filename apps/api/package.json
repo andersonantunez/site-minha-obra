@@ -1,0 +1,50 @@
+{
+  "name": "@minhaobra/api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
+    "lint": "eslint . --max-warnings=0",
+    "test": "vitest run",
+    "db:migrate": "tsx scripts/migrate.ts up",
+    "db:status": "tsx scripts/migrate.ts status",
+    "admin:grant": "tsx scripts/grantSystemAdmin.ts"
+  },
+  "dependencies": {
+    "cors": "latest",
+    "dotenv": "latest",
+    "exceljs": "^4.4.0",
+    "express": "latest",
+    "google-auth-library": "latest",
+    "helmet": "latest",
+    "jsonwebtoken": "latest",
+    "multer": "latest",
+    "nodemailer": "latest",
+    "pdfkit": "latest",
+    "pg": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "@types/cors": "latest",
+    "@types/express": "latest",
+    "@types/jsonwebtoken": "latest",
+    "@types/multer": "latest",
+    "@types/node": "latest",
+    "@types/nodemailer": "latest",
+    "@types/pdfkit": "latest",
+    "@types/pg": "latest",
+    "@types/supertest": "latest",
+    "eslint": "latest",
+    "globals": "latest",
+    "supertest": "latest",
+    "tsx": "latest",
+    "typescript": "latest",
+    "typescript-eslint": "latest",
+    "vitest": "latest"
+  }
+}

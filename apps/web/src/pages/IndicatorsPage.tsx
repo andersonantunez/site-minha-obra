@@ -1,0 +1,23 @@
+import { useQuery } from '@tanstack/react-query'
+import { Download } from 'lucide-react'
+import { useState } from 'react'
+import { useParams } from 'react-router-dom'
+import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { ErrorNotice, MetricCard, PageHeader } from '../components/Ui'
+import { api } from '../lib/api'
+import { formatMoney, formatMonth } from '../lib/format'
+
+type Indicators={indicadores:Record<string,string>;principaisFornecedores:{fornecedor:string;total:string}[];principaisEtapas:{etapa:string;total:string}[];evolucaoMensal:{mes:string;pago:string}[]}
+type CurrentResources={resumo:{orcado_ate_hoje:string;pago_ate_hoje:string;disponivel_hoje:string;excedente_hoje:string}}
+
+export function IndicatorsPage(){
+  const{projetoId}=useParams();const[competence,setCompetence]=useState(new Date().toISOString().slice(0,7))
+  const{data,error,isLoading}=useQuery({queryKey:['indicadores',projetoId,competence],queryFn:()=>api<Indicators>(`/projetos/${projetoId}/dashboard/indicadores?competencia=${competence}`)})
+  const{data:resources}=useQuery({queryKey:['recursos-atuais',projetoId],queryFn:()=>api<CurrentResources>(`/projetos/${projetoId}/orcamento/resumo`)})
+  const values=data?.indicadores;const current=resources?.resumo;const budget=Number(current?.orcado_ate_hoje||0);const paid=Number(current?.pago_ate_hoje||0);const available=Number(current?.disponivel_hoje||0);const excess=Number(current?.excedente_hoje||0)
+  const pie=excess>0?[{name:'Fluxo consumido',value:budget,color:'#8c765b'},{name:'Excedente',value:excess,color:'#a34f43'}]:[{name:'Pago',value:paid,color:'#5f7866'},{name:'Disponível',value:available,color:'#d7c9b7'}]
+  return <div><PageHeader eyebrow="FINANCEIRO" title="Indicadores" description="Indicadores financeiros mensais e acumulados da obra." action={<div className="heading-actions"><label className="compact-field"><span>Competência</span><input type="month" value={competence} onChange={event=>setCompetence(event.target.value)}/></label><a className="app-button" href={`/api/projetos/${projetoId}/dashboard/relatorio.pdf?competencia=${competence}`}><Download/>Gerar relatório PDF</a></div>}/>
+    {error&&<ErrorNotice message={error.message}/>} {isLoading?<div className="route-loading"><span/></div>:values&&<><section className="metrics-row seven"><MetricCard label="Pendente" value={formatMoney(values.pendente)} tone="negative"/><MetricCard label="Em negociação" value={formatMoney(values.em_negociacao)}/><MetricCard label="Pago - Aguardando Entrega" value={formatMoney(values.pago_aguardando_entrega)} tone="positive"/><MetricCard label="Concluído" value={formatMoney(values.concluido)}/><MetricCard label="Fluxo previsto" value={formatMoney(values.orcamento_previsto)}/><MetricCard label="Comprometido" value={formatMoney(values.comprometido)}/><MetricCard label="Fluxo × realizado" value={formatMoney(values.diferenca_orcamento_realizado)} detail={`${Number(values.percentual_executado).toLocaleString('pt-BR')}% executado`}/></section>
+      <section className="dashboard-grid indicator-grid"><article className="dashboard-panel chart-panel"><header><div><span>RECURSOS ATÉ HOJE</span><h2>Pago × disponível</h2></div></header><ResponsiveContainer width="100%" height={270}><PieChart><Pie data={pie} dataKey="value" nameKey="name" innerRadius={58} outerRadius={90}>{pie.map(item=><Cell key={item.name} fill={item.color}/>)}</Pie><Tooltip formatter={value=>formatMoney(Number(value))}/><Legend/></PieChart></ResponsiveContainer></article><article className="dashboard-panel chart-panel wide"><header><div><span>EVOLUÇÃO</span><h2>Custos pagos por mês</h2></div></header><ResponsiveContainer width="100%" height={270}><BarChart data={data.evolucaoMensal.map(item=>({...item,label:formatMonth(item.mes),pago:Number(item.pago)}))}><CartesianGrid vertical={false} stroke="#e7e4dc"/><XAxis dataKey="label" axisLine={false} tickLine={false}/><YAxis axisLine={false} tickLine={false} tickFormatter={value=>`${Math.round(value/1000)}k`}/><Tooltip formatter={value=>formatMoney(Number(value))}/><Bar dataKey="pago" name="Pago" fill="#8c765b" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer></article><article className="dashboard-panel"><header><div><span>CONCENTRAÇÃO</span><h2>Principais fornecedores</h2></div></header><div className="rank-list">{data.principaisFornecedores.map((item,index)=><div key={item.fornecedor}><span>{String(index+1).padStart(2,'0')}</span><p>{item.fornecedor}</p><strong>{formatMoney(item.total)}</strong></div>)}</div></article></section></>}
+  </div>
+}

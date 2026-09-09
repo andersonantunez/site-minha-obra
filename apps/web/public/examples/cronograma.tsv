@@ -1,0 +1,4 @@
+tipo	etapa_pai	ordem	etapa	descricao	data_inicio_previsto	data_fim_previsto	valor_previsto	data_inicio	data_fim
+ETAPA		1	Etapa 1 - Burocracias	Licenças e preparativos da obra	01/08/2026	31/08/2026	20000,00		
+SUBITEM	Etapa 1 - Burocracias	1		Alvará e documentação municipal	01/08/2026	10/08/2026	5000,00		
+SUBITEM	Etapa 1 - Burocracias	2		Registro e taxas da obra	11/08/2026	20/08/2026	15000,00		

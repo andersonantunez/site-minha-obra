@@ -1,0 +1,2 @@
+data_pagamento	etapa	quantidade	unidade	descricao	fornecedor	chave_pix	links_cotacao	valor	status	data_agendamento	data_entrega	forma_pagamento	documentos	observacao
+31/08/2026	2	438	Peças	438 peças de madeira serrada	Madeireira Fortaleza		https://fornecedor.example/cotacao	R$ 5.663,00	CONCLUIDO			PIX	https://drive.google.com/documento	Compra para estrutura

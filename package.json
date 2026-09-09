@@ -1,0 +1,29 @@
+{
+  "name": "minhaobra",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "apps/web",
+    "apps/api"
+  ],
+  "scripts": {
+    "dev": "concurrently -n WEB,API -c cyan,yellow \"npm run dev --workspace=@minhaobra/web\" \"npm run dev --workspace=@minhaobra/api\"",
+    "dev:web": "npm run dev --workspace=@minhaobra/web",
+    "dev:api": "npm run dev --workspace=@minhaobra/api",
+    "build": "npm run build --workspace=@minhaobra/api && npm run build --workspace=@minhaobra/web",
+    "typecheck": "npm run typecheck --workspace=@minhaobra/api && npm run typecheck --workspace=@minhaobra/web",
+    "lint": "npm run lint --workspace=@minhaobra/api && npm run lint --workspace=@minhaobra/web",
+    "test": "npm run test --workspace=@minhaobra/api && npm run test --workspace=@minhaobra/web",
+    "db:migrate": "npm run db:migrate --workspace=@minhaobra/api",
+    "db:status": "npm run db:status --workspace=@minhaobra/api",
+    "admin:grant": "npm run admin:grant --workspace=@minhaobra/api --"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "typescript": "^5.9.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

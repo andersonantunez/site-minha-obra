@@ -1,0 +1,14 @@
+[
+  {
+    "data": "2026-09-01",
+    "descricao": "Aporte inicial",
+    "detalhes": "Entrada de recursos próprios",
+    "valor": 75000.00
+  },
+  {
+    "data": "2026-09-03",
+    "descricao": "Taxa bancária",
+    "detalhes": "Tarifa da conta do projeto",
+    "valor": -49.90
+  }
+]

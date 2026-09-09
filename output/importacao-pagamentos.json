@@ -1,0 +1,22 @@
+[
+  {"data_pagamento":"12/01/2026","etapa":1,"descricao":"Custas Unificação Parte 1","fornecedor":"Prefeitura","valor":"R$ 167,52","status":"FINALIZADO","forma_pagamento":"PIX"},
+  {"data_pagamento":"27/01/2026","etapa":1,"descricao":"Custas Unificação Parte 2","fornecedor":"Prefeitura","valor":"R$ 108,39","status":"FINALIZADO","forma_pagamento":"PIX"},
+  {"data_pagamento":"05/02/2026","etapa":1,"descricao":"Custas Unificação Parte 3","fornecedor":"Prefeitura","valor":"R$ 700,00","status":"FINALIZADO","forma_pagamento":"PIX"},
+  {"data_pagamento":"19/02/2026","etapa":1,"descricao":"Custas Engenheiro","fornecedor":"Engenheiro","valor":"R$ 980,00","status":"FINALIZADO","forma_pagamento":"PIX"},
+  {"data_pagamento":"24/06/2026","etapa":1,"descricao":"Deslocamento do container para o terreno da obra","valor":"R$ 350,00","status":"FINALIZADO","forma_pagamento":"PIX"},
+  {"data_pagamento":"05/07/2026","etapa":1,"quantidade":2,"descricao":"2 Câmeras Intelbras","fornecedor":"Amazon","valor":"R$ 610,06","status":"FINALIZADO","forma_pagamento":"PIX"},
+  {"data_pagamento":"03/08/2026","etapa":1,"quantidade":2,"descricao":"2 Protetor de Câmera de Segurança Universal Resistente Contra Sol e Chuva Poeira","fornecedor":"Shoppe","valor":"R$ 79,90","status":"FINALIZADO","forma_pagamento":"CARTAO"},
+  {"data_pagamento":"04/08/2026","etapa":1,"descricao":"Entrada Contrato","fornecedor":"Engenheiro","valor":"R$ 5.000,00","status":"FINALIZADO","forma_pagamento":"PIX"},
+  {"data_pagamento":"10/08/2026","etapa":1,"descricao":"Taxa de Regularização do Processo (Alvará)","fornecedor":"Prefeitura","valor":"R$ 194,19","status":"FINALIZADO","forma_pagamento":"PIX"},
+  {"data_pagamento":"10/08/2026","etapa":1,"descricao":"Taxa de Expediente da Regularização (Alvará)","fornecedor":"Prefeitura","valor":"R$ 83,98","status":"FINALIZADO","forma_pagamento":"PIX"},
+  {"data_pagamento":"21/08/2026","etapa":2,"descricao":"Poste de luz da CEEE e mureta de muro da Corsan","fornecedor":"JVI Postes","valor":"R$ 2.990,00","status":"FINALIZADO","forma_pagamento":"PIX"},
+  {"data_pagamento":"28/08/2026","etapa":2,"quantidade":20,"unidade":"Caixas","descricao":"Aditivo Impermeabilizante Contra Umidade Viapol 18L","fornecedor":"Tumeleiro","valor":"R$ 1.525,40","status":"FINALIZADO","forma_pagamento":"CARTAO"},
+  {"data_pagamento":"28/08/2026","etapa":2,"quantidade":20,"unidade":"Caixas","descricao":"Aditivo Impermeabilizante Contra Umidade Viapol 18L","fornecedor":"Tumeleiro","valor":"R$ 1.525,40","status":"FINALIZADO","forma_pagamento":"CARTAO"},
+  {"data_pagamento":"31/08/2026","etapa":2,"quantidade":15,"unidade":"Galões","descricao":"Aditivo Impermeabilizante Injetec 5L Vbrasil Hidrofugante Incolor","fornecedor":"Mercado Livre","valor":"R$ 1.425,00","status":"FINALIZADO","forma_pagamento":"PIX"},
+  {"data_pagamento":"31/08/2026","etapa":2,"quantidade":438,"unidade":"Peças","descricao":"438 peças de madeira serrada","fornecedor":"Madereira e Serraria Fortaleza","valor":"R$ 5.663,00","status":"FINALIZADO","data_agendamento":"31/08/2026","data_entrega":"31/08/2026","forma_pagamento":"PIX"},
+  {"data_pagamento":"31/08/2026","etapa":2,"unidade":"Peças","descricao":"Ferros Barra Reta","fornecedor":"Arcelormittal Brasil","valor":"R$ 11.491,67","status":"PAGO","data_agendamento":"02/09/2026","forma_pagamento":"PIX"},
+  {"data_pagamento":"31/08/2026","etapa":2,"descricao":"Frete Ferros Barra Reta","fornecedor":"Arcelormittal Brasil","valor":"R$ 170,00","status":"PAGO","data_agendamento":"03/09/2026","forma_pagamento":"PIX"},
+  {"data_pagamento":"01/09/2026","etapa":2,"quantidade":20,"unidade":"Caixas","descricao":"Aditivo Impermeabilizante Quart Tecplus Top 18kg","fornecedor":"Kasa Obra","valor":"R$ 998,00","status":"PAGO","data_agendamento":"04/09/2026","forma_pagamento":"PIX"},
+  {"data_pagamento":"03/09/2026","etapa":2,"quantidade":3000,"unidade":"Unidades","descricao":"Tijolos 9 furos 14 x 19 x 24 (R$ 1.900,00 milheiro)","fornecedor":"Olaria Grimm","valor":"R$ 5.500,00","status":"PAGO","forma_pagamento":"PIX"},
+  {"etapa":2,"descricao":"Laje Protendida","fornecedor":"Tiago Vogel","valor":"R$ 11.500,00","status":"EM_NEGOCIACAO"}
+]
