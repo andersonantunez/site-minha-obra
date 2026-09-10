@@ -67,7 +67,7 @@ budgetRouter.get('/', requireProjectPermission('orcamento.visualizar'), async (r
   if (start && end && end < start) throw new AppError(422, 'A data final não pode ser anterior à data inicial.', 'PERIODO_INVALIDO')
   const params = [req.acessoProjeto!.projetoId,SETTLED_PAYMENT_STATUSES,`%${search}%`,start,end,includeFuture]
   const [items, totals] = await Promise.all([
-    query(`${cashFlowCte} SELECT id,origem,origem_id,data,descricao,detalhes,quantidade,unidade,valor,editavel,(data>CURRENT_DATE) AS provisionado
+      query(`${cashFlowCte} SELECT id,origem,origem_id,data,descricao,detalhes,quantidade,unidade,fornecedor,payment_status,data_agendamento,data_entrega,forma_pagamento,chave_pix,contato_fornecedor,nome_contato_fornecedor,payment_etapa,payment_observacao,valor,editavel,(data>CURRENT_DATE) AS provisionado
       FROM fluxo ${cashFlowFilter} ORDER BY data DESC,origem_id DESC LIMIT $7 OFFSET $8`, [...params,pageSize,(page-1)*pageSize]),
     query<{ total: number; total_entrada: string; total_saida: string; saldo_atual: string; saldo_com_provisao: string }>(`${cashFlowCte}
       SELECT COUNT(*)::int AS total,

@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Copy, ExternalLink, FileText, Link2, Papercl
 import { useState, type FormEvent } from 'react'
 import { useParams } from 'react-router-dom'
 import { ImportDialog } from '../components/imports/ImportDialog'
+import { ExpandedRowDetails } from '../components/ExpandedRowDetails'
 import { ExportAction } from '../components/ExportDialog'
 import { AddButton, EmptyState, ErrorNotice, PageHeader } from '../components/Ui'
 import { api, jsonBody } from '../lib/api'
@@ -52,15 +53,13 @@ function PaymentLinks({projectId,payment,editable=false,compact=false}:{projectI
   </section>
 }
 
-function PaymentDetailField({ label, value }: { label: string; value: string }) {
-  return <p><strong>{label}:</strong> <span>{value}</span></p>
-}
-
 function PaymentExpandedDetails({ projectId, payment }: { projectId: string; payment: Payment }) {
-  const quantity = payment.quantidade ? `${formatQuantity(payment.quantidade)} ${payment.unidade || ''}`.trim() : '—'
-  return <div className="payment-expanded cash-flow-details"><strong>Detalhes do pagamento</strong><div className="payment-detail-columns"><div><PaymentDetailField label="Status" value={paymentStatusLabel(payment.status)}/><PaymentDetailField label="Data de agendamento" value={formatDate(payment.data_agendamento)}/><PaymentDetailField label="Data de entrega" value={formatDate(payment.data_entrega)}/></div><div><PaymentDetailField label="Forma de pagamento" value={payment.forma_pagamento || '—'}/><PaymentDetailField label="Chave Pix" value={payment.chave_pix || '—'}/><PaymentDetailField label="Contato do fornecedor" value={payment.contato_fornecedor || '—'}/></div><div><PaymentDetailField label="Nome do funcionário" value={payment.nome_contato_fornecedor || '—'}/><PaymentDetailField label="Quantidade" value={quantity}/></div></div><section className="cash-flow-payment-documents payment-observations"><strong>Observações</strong><p className="preserve-lines">{payment.observacao || '—'}</p></section><PaymentDocuments projectId={projectId} payment={payment} compact/><PaymentLinks projectId={projectId} payment={payment} compact/></div>
+  return <ExpandedRowDetails title="Detalhes do pagamento" columns={[
+    [{ label: 'Status', value: paymentStatusLabel(payment.status) }, { label: 'Data de agendamento', value: formatDate(payment.data_agendamento) }, { label: 'Data de entrega', value: formatDate(payment.data_entrega) }],
+    [{ label: 'Forma de pagamento', value: payment.forma_pagamento || '\u2014' }, { label: 'Chave Pix', value: payment.chave_pix || '\u2014' }, { label: 'Contato do fornecedor', value: payment.contato_fornecedor || '\u2014' }],
+    [{ label: 'Nome do funcion\u00e1rio', value: payment.nome_contato_fornecedor || '\u2014' }],
+  ]} details={payment.observacao}><PaymentDocuments projectId={projectId} payment={payment} compact/><PaymentLinks projectId={projectId} payment={payment} compact/></ExpandedRowDetails>
 }
-
 export function PaymentsPage(){
   const{projetoId}=useParams()
   const{can}=useProjectAccess()
