@@ -1,16 +1,20 @@
 import { useQuery } from '@tanstack/react-query'
 import {
-  Building2, CalendarRange, CheckSquare2, ChevronDown, FileText, Gauge,
-  Landmark, LayoutDashboard, LogOut, Menu, ReceiptText, Settings, ShieldCheck, Tags, Users, X,
+  Building2, CalendarRange, CheckSquare2, ChevronDown, FileText,
+  Landmark, LayoutDashboard, Menu, ReceiptText, Settings, ShieldCheck, Tags, Users, X,
 } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { hasProjectPermission, roleLabel, type ProjectAccessInfo } from '../lib/projectAccess'
+import { TopbarUser } from '../components/TopbarUser'
 
 const navigation: { group?: string; items: { label: string; icon: typeof LayoutDashboard; path: string; permission: string }[] }[] = [
-  { items: [{ label: 'Visão geral', icon: LayoutDashboard, path: '', permission: 'visao_geral.visualizar' }] },
+  { items: [
+    { label: 'Dados da obra', icon: Settings, path: 'configuracoes', permission: 'configuracoes.visualizar' },
+    { label: 'Visão geral', icon: LayoutDashboard, path: '', permission: 'visao_geral.visualizar' },
+  ] },
   { group: 'PLANEJAMENTO', items: [
     { label: 'Cronograma', icon: CalendarRange, path: 'cronograma', permission: 'etapas.visualizar' },
     { label: 'Tarefas', icon: CheckSquare2, path: 'tarefas', permission: 'tarefas.visualizar' },
@@ -26,7 +30,6 @@ const navigation: { group?: string; items: { label: string; icon: typeof LayoutD
   { group: 'GESTÃO', items: [
     { label: 'Participantes', icon: Users, path: 'participantes', permission: 'membros.visualizar' },
     { label: 'Permissões', icon: ShieldCheck, path: 'permissoes', permission: 'permissoes.visualizar' },
-    { label: 'Configurações', icon: Settings, path: 'configuracoes', permission: 'configuracoes.visualizar' },
   ] },
 ]
 
@@ -60,7 +63,7 @@ export function AppShell() {
       <header className="app-topbar">
         <button className="mobile-nav-button" onClick={() => setMobileOpen(true)}><Menu /></button>
         <div className="topbar-spacer" />
-        <div className="topbar-actions">{user?.administrador_sistema && <button onClick={() => navigate('/admin')}><Gauge /> Administração</button>}<div className="topbar-user">{user?.foto_url ? <img src={user.foto_url} alt="" referrerPolicy="no-referrer" /> : <span className="topbar-user-avatar">{user?.nome?.charAt(0)}</span>}<div><strong>{user?.nome}</strong><small>{roleLabel(data?.projeto.papel)}</small></div><button className="topbar-signout" aria-label="Sair" title="Sair" onClick={() => void signOut().then(() => navigate('/'))}><LogOut /></button></div></div>
+        <div className="topbar-actions">{user?.administrador_sistema && <NavLink className="system-admin-topbar-link" to="/admin"><Settings />Admin</NavLink>}<TopbarUser user={user} role={roleLabel(data?.projeto.papel)} onSignOut={() => void signOut().then(() => navigate('/'))} /></div>
       </header>
       <main className="app-content"><Outlet context={{ project: data?.projeto, access: data }} /></main>
     </div>

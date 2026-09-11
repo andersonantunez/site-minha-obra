@@ -4,6 +4,7 @@ export type ProjectAccess = {
   usuarioId: number
   papel: string
   proprietario: boolean
+  administradorSistema: boolean
   permissoes: Set<string>
 }
 

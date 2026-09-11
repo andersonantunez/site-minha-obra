@@ -5,6 +5,7 @@ import { query, withTransaction } from '../../config/database.js'
 import { env } from '../../config/env.js'
 import { issueSessionToken, requireAuth } from '../../shared/auth.js'
 import { AppError } from '../../shared/errors.js'
+import { isSystemAdmin } from '../../shared/projectAccess.js'
 import { validateBody } from '../../shared/validation.js'
 
 const googleClient = new OAuth2Client(env.googleClientId)
@@ -44,7 +45,7 @@ authRouter.post('/google', validateBody(loginSchema), async (req, res) => {
     maxAge: 8 * 60 * 60 * 1000,
     path: '/',
   })
-  res.json({ usuario: user })
+  res.json({ usuario: { ...user, administrador_sistema: await isSystemAdmin(user.id) } })
 })
 
 authRouter.post('/sair', (_req, res) => {
@@ -53,7 +54,7 @@ authRouter.post('/sair', (_req, res) => {
 })
 
 authRouter.get('/eu', requireAuth, async (req, res) => {
-  const { rows } = await query(`SELECT u.id,u.nome,u.email,u.foto_url,u.administrador_sistema,
+  const { rows } = await query(`SELECT u.id,u.nome,u.email,u.foto_url,usuario_eh_administrador_sistema(u.id) AS administrador_sistema,
     p.codigo AS plano,p.nome AS nome_plano,p.limite_projetos_proprios
     FROM usuarios u JOIN planos p ON p.id=u.plano_id WHERE u.id=$1`, [req.usuarioId])
   res.json({ usuario: rows[0] })

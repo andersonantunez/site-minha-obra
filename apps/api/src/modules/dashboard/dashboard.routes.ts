@@ -18,8 +18,8 @@ dashboardRouter.get('/', requireProjectPermission('visao_geral.visualizar'), asy
       p.processo_aprovacao,p.pasta_digital,p.planta_numero,p.alvara,p.art,p.cno_obra,p.matricula_terreno,
       presentation.id AS imagem_apresentacao_id,presentation.url AS imagem_apresentacao_url
       FROM projetos p
-      LEFT JOIN LATERAL (SELECT id,url FROM documentos_projeto d WHERE d.projeto_id=p.id
-        AND lower(d.categoria)=lower('Imagem de Apresentação') AND d.excluido_em IS NULL
+      LEFT JOIN LATERAL (SELECT d.id,d.url FROM documentos_projeto d JOIN documentos_projeto_categorias dc ON dc.documento_id=d.id JOIN categorias_documento c ON c.id=dc.categoria_id WHERE d.projeto_id=p.id
+        AND lower(c.nome)=lower('Imagem de Apresentação') AND c.excluido_em IS NULL AND d.excluido_em IS NULL
         ORDER BY d.criado_em DESC,d.id DESC LIMIT 1) presentation ON TRUE
       WHERE p.id=$1 AND p.excluido_em IS NULL`, [projectId]),
     query(`SELECT
@@ -65,9 +65,9 @@ dashboardRouter.get('/', requireProjectPermission('visao_geral.visualizar'), asy
 })
 
 dashboardRouter.get('/imagem-apresentacao', requireProjectPermission('visao_geral.visualizar'), async (req, res) => {
-  const { rows } = await query<{ caminho_arquivo: string | null; tipo_mime: string | null }>(`SELECT caminho_arquivo,tipo_mime
-    FROM documentos_projeto WHERE projeto_id=$1 AND lower(categoria)=lower('Imagem de Apresentação')
-      AND excluido_em IS NULL AND caminho_arquivo IS NOT NULL ORDER BY criado_em DESC,id DESC LIMIT 1`, [req.acessoProjeto!.projetoId])
+  const { rows } = await query<{ caminho_arquivo: string | null; tipo_mime: string | null }>(`SELECT d.caminho_arquivo,d.tipo_mime
+    FROM documentos_projeto d JOIN documentos_projeto_categorias dc ON dc.documento_id=d.id JOIN categorias_documento c ON c.id=dc.categoria_id WHERE d.projeto_id=$1 AND lower(c.nome)=lower('Imagem de Apresentação')
+      AND c.excluido_em IS NULL AND d.excluido_em IS NULL AND d.caminho_arquivo IS NOT NULL ORDER BY d.criado_em DESC,d.id DESC LIMIT 1`, [req.acessoProjeto!.projetoId])
   const image = rows[0]
   if (!image?.caminho_arquivo || !image.tipo_mime?.startsWith('image/')) throw new AppError(404, 'Imagem de apresentação não encontrada.', 'IMAGEM_APRESENTACAO_NAO_ENCONTRADA')
   res.setHeader('Content-Type', image.tipo_mime)

@@ -17,7 +17,7 @@ type ReportPayment = {
   contato_fornecedor: string | null
   nome_contato_fornecedor: string | null
   chave_pix: string | null
-  valor: string
+  valor: string | null
   status: PaymentStatus
   forma_pagamento: string | null
   data_pagamento: string | null
@@ -33,7 +33,7 @@ type PaymentReport = {
   pagamentos: ReportPayment[]
 }
 
-const formatMoney = (value: string | number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(value))
+const formatMoney = (value: string | number | null) => value === null ? '—' : new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(value))
 const formatDate = (value: string | Date | null) => {
   if (!value) return '—'
   const iso = value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10)
@@ -76,7 +76,7 @@ export function createPaymentPdf(projectId: number, report: PaymentReport) {
   })
   const pageBottom = 535
   const contentWidth = 756
-  const total = report.pagamentos.reduce((sum, payment) => sum + Number(payment.valor), 0)
+  const total = report.pagamentos.reduce((sum, payment) => sum + Number(payment.valor ?? 0), 0)
 
   const drawHeader = () => {
     document.fillColor('#202622').font('Helvetica-Bold').fontSize(18).text('MINHAOBRA', 42, 36)
@@ -191,7 +191,7 @@ export async function createPaymentWorkbook(projectId: number, report: PaymentRe
       id: payment.id, etapa: payment.etapa || null, subitem: payment.subitem || null, data_pagamento: excelDate(payment.data_pagamento),
       quantidade: payment.quantidade === null ? null : Number(payment.quantidade), unidade: payment.unidade || null, descricao: payment.descricao,
       observacao: payment.observacao || null, fornecedor: payment.fornecedor || null, contato: payment.contato_fornecedor || null, funcionario: payment.nome_contato_fornecedor || null,
-      pix: payment.chave_pix || null, valor: Number(payment.valor), status: statusLabel(payment.status), agendamento: excelDate(payment.data_agendamento),
+      pix: payment.chave_pix || null, valor: payment.valor === null ? null : Number(payment.valor), status: statusLabel(payment.status), agendamento: excelDate(payment.data_agendamento),
       entrega: excelDate(payment.data_entrega), forma: payment.forma_pagamento || null, cotacoes: payment.links_cotacao.map((link) => link.url).join('\n') || null,
       documentos: payment.documentos.map((item) => paymentDocumentUrl(projectId, payment.id, item)).join('\n') || null,
     })

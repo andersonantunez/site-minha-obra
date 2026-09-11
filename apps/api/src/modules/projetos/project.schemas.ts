@@ -35,3 +35,7 @@ export const projectInputSchema = z.object({
   }
   if ((value.latitude === null) !== (value.longitude === null)) context.addIssue({ code: 'custom', path: ['latitude'], message: 'Informe latitude e longitude juntas.' })
 })
+
+export const projectArchiveSchema = z.object({
+  arquivado: z.boolean(),
+})

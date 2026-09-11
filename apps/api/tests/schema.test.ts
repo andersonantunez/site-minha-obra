@@ -54,4 +54,31 @@ describe('modelagem persistida em português', () => {
     expect(sql).toContain("'permissoes.visualizar'")
     expect(sql).toContain("'permissoes.atualizar'")
   })
+
+  it('armazena variáveis do sistema como JSONB preservando a chave única', async () => {
+    const baseSql = await migration('003_financeiro_auditoria.sql')
+    const jsonbSql = await migration('024_variaveis_sistema_jsonb.sql')
+    expect(baseSql).toContain('chave VARCHAR(100) NOT NULL UNIQUE')
+    expect(jsonbSql).toContain('ALTER COLUMN valor TYPE JSONB')
+  })
+
+  it('mantém a autorização global exclusivamente no atributo do usuário', async () => {
+    const sql = await migration('027_remover_allowlist_administradores.sql')
+    expect(sql).toContain("DELETE FROM configuracoes_sistema")
+    expect(sql).toContain('u.administrador_sistema')
+    expect(sql).not.toContain('configuracoes_sistema cs')
+    expect(sql).not.toContain('email')
+  })
+
+  it('permite pagamentos sem valor definido', async () => {
+    const sql = await migration('028_pagamentos_valor_opcional.sql')
+    expect(sql).toContain('ALTER COLUMN valor DROP NOT NULL')
+    expect(sql).toContain('ALTER COLUMN valor DROP DEFAULT')
+  })
+
+  it('mantém o arquivamento de projeto separado da exclusão lógica', async () => {
+    const sql = await migration('029_arquivamento_projetos.sql')
+    expect(sql).toContain('ADD COLUMN arquivado_em')
+    expect(sql).toContain('WHERE excluido_em IS NULL')
+  })
 })

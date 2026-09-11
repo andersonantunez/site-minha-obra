@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import multer from 'multer'
+import type { PoolClient } from 'pg'
 import { z } from 'zod'
 import { query, withTransaction } from '../../config/database.js'
 import { env } from '../../config/env.js'
@@ -11,6 +12,7 @@ import { requireProjectPermission } from '../../shared/projectAccess.js'
 import { readStoredFile, safeDownloadName, saveUploadedFile } from '../../shared/storage.js'
 import { identifyStore, validateHttpUrl } from '../../shared/url.js'
 import { validateBody } from '../../shared/validation.js'
+import { assignDocumentCategoryByName } from '../arquivos/document-categories.js'
 import { createPaymentPdf, createPaymentWorkbook, getPaymentReport } from './payment-report.service.js'
 import { normalizePaymentStatus, PAYMENT_STATUS_VALUES, type PaymentStatus } from './payment-status.js'
 import { linkSchema, paymentSchema, paymentStatusSchema } from './payment.schemas.js'
@@ -55,14 +57,15 @@ async function syncPaymentLinks(client: { query: (sql: string, values?: unknown[
   }
 }
 
-async function syncPaymentDocumentLinks(client: { query: (sql: string, values?: unknown[]) => Promise<unknown> }, paymentId: number, links: string[], userId: number) {
+async function syncPaymentDocumentLinks(client: PoolClient, paymentId: number, links: string[], userId: number) {
   await client.query(`INSERT INTO categorias_documento (projeto_id,nome,criado_por)
     SELECT projeto_id,'Pagamentos',$2 FROM pagamentos WHERE id=$1 ON CONFLICT DO NOTHING`, [paymentId, userId])
   for (const rawUrl of links) {
     const url = validateHttpUrl(rawUrl)
-    await client.query(`INSERT INTO documentos_projeto
+    const document = await client.query<{ id: number; projeto_id: number }>(`INSERT INTO documentos_projeto
       (projeto_id,pagamento_id,titulo,categoria,tipo_origem,url,criado_por)
-      SELECT projeto_id,id,$2,'Pagamentos','LINK',$3,$4 FROM pagamentos WHERE id=$1`, [paymentId, identifyStore(url) || 'Documento relacionado', url, userId])
+      SELECT projeto_id,id,$2,'Pagamentos','LINK',$3,$4 FROM pagamentos WHERE id=$1 RETURNING id,projeto_id`, [paymentId, identifyStore(url) || 'Documento relacionado', url, userId])
+    if (document.rows[0]) await assignDocumentCategoryByName(client, document.rows[0].id, document.rows[0].projeto_id, 'Pagamentos')
   }
 }
 
@@ -279,10 +282,14 @@ paymentsRouter.post('/:pagamentoId/documentos', requireProjectPermission('docume
   await query(`INSERT INTO categorias_documento (projeto_id,nome,criado_por) VALUES ($1,'Pagamentos',$2) ON CONFLICT DO NOTHING`, [req.acessoProjeto!.projetoId, req.usuarioId])
   const stored = req.file ? await saveUploadedFile(req.acessoProjeto!.projetoId, 'pagamentos', req.file) : null
   const url = input.url ? validateHttpUrl(input.url) : null
-  const { rows } = await query(`INSERT INTO documentos_projeto
+  const document = await withTransaction(async (client) => {
+    const { rows } = await client.query(`INSERT INTO documentos_projeto
     (projeto_id,pagamento_id,titulo,categoria,tipo_origem,url,caminho_arquivo,nome_original,tipo_mime,criado_por)
-    VALUES ($1,$2,$3,'Pagamentos',$4,$5,$6,$7,$8,$9) RETURNING *`, [req.acessoProjeto!.projetoId,paymentId,input.titulo,stored?'ARQUIVO':'LINK',url,stored?.relativePath,stored?.originalName,stored?.mimeType,req.usuarioId])
-  res.status(201).json({ documento: rows[0] })
+      VALUES ($1,$2,$3,'Pagamentos',$4,$5,$6,$7,$8,$9) RETURNING *`, [req.acessoProjeto!.projetoId,paymentId,input.titulo,stored?'ARQUIVO':'LINK',url,stored?.relativePath,stored?.originalName,stored?.mimeType,req.usuarioId])
+    await assignDocumentCategoryByName(client, rows[0]!.id, req.acessoProjeto!.projetoId, 'Pagamentos')
+    return rows[0]!
+  })
+  res.status(201).json({ documento: document })
 })
 
 paymentsRouter.get('/:pagamentoId/documentos/:documentoId/arquivo', requireProjectPermission('documentos.visualizar'), async (req, res) => {

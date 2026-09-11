@@ -6,16 +6,17 @@ export type ProjectAccessInfo = {
   projeto: { id: number; nome: string; papel?: string }
   permissoes: string[]
   proprietario: boolean
+  administradorSistema: boolean
 }
 
 export type ProjectOutletContext = { project?: ProjectAccessInfo['projeto']; access?: ProjectAccessInfo }
 
 export function roleLabel(role?: string) {
-  return { PROPRIETARIO: 'Proprietário', ENGENHEIRO: 'Engenheiro', LEITOR: 'Observador' }[role || ''] || role || 'Participante'
+  return { ADMINISTRADOR_SISTEMA: 'Administrador do Sistema', PROPRIETARIO: 'Proprietário', ENGENHEIRO: 'Engenheiro', LEITOR: 'Observador' }[role || ''] || role || 'Participante'
 }
 
 export function hasProjectPermission(access: ProjectAccessInfo | undefined, permission: string) {
-  return Boolean(access?.proprietario || access?.permissoes.includes(permission))
+  return Boolean(access?.administradorSistema || access?.proprietario || access?.permissoes.includes(permission))
 }
 
 export function useProjectAccess() {

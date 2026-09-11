@@ -24,7 +24,7 @@ export const paymentSchema = z.object({
   contato_fornecedor: z.string().trim().max(30).optional().nullable().transform((value) => value || null),
   nome_contato_fornecedor: z.string().trim().max(180).optional().nullable().transform((value) => value || null),
   chave_pix: z.string().trim().max(255).optional().nullable().transform((value) => value || null),
-  valor: z.preprocess(parseBrazilianNumber, z.coerce.number().min(0).max(999_999_999_999.99).default(0)),
+  valor: z.preprocess(parseBrazilianNumber, z.coerce.number().min(0).max(999_999_999_999.99).optional().nullable()).transform((value) => value ?? null),
   status: z.enum(PAYMENT_STATUS_VALUES).default('PENDENTE'),
   forma_pagamento: z.enum(['PIX', 'CARTAO', 'DINHEIRO', 'BOLETO', 'TRANSFERENCIA', 'OUTRO']).optional().nullable(),
   data_pagamento: optionalDate,

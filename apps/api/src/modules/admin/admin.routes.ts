@@ -1,10 +1,12 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { query } from '../../config/database.js'
+import { query, withTransaction } from '../../config/database.js'
 import { requireAuth } from '../../shared/auth.js'
+import { recordAudit } from '../../shared/audit.js'
 import { AppError } from '../../shared/errors.js'
 import { requireSystemAdmin } from '../../shared/projectAccess.js'
 import { validateBody } from '../../shared/validation.js'
+import { systemVariableSchema } from './system-variable.schemas.js'
 
 export const adminRouter = Router()
 adminRouter.use(requireAuth, requireSystemAdmin)
@@ -28,7 +30,7 @@ adminRouter.get('/usuarios', async (req, res) => {
   const pageSize = Math.min(100, Math.max(1, Number(req.query.porPagina) || 25))
   const search = String(req.query.busca || '').trim()
   const [items, count] = await Promise.all([
-    query(`SELECT u.id,u.nome,u.email,u.foto_url,u.administrador_sistema,u.ativo,u.ultimo_acesso_em,u.criado_em,
+    query(`SELECT u.id,u.nome,u.email,u.foto_url,usuario_eh_administrador_sistema(u.id) AS administrador_sistema,u.ativo,u.ultimo_acesso_em,u.criado_em,
       pl.codigo AS plano,(SELECT COUNT(*)::int FROM projetos p WHERE p.proprietario_usuario_id=u.id AND p.excluido_em IS NULL) AS projetos_proprios,
       (SELECT COUNT(*)::int FROM membros_projeto mp WHERE mp.usuario_id=u.id AND mp.ativo) AS participacoes
       FROM usuarios u JOIN planos pl ON pl.id=u.plano_id WHERE ($1='%%' OR u.nome ILIKE $1 OR u.email ILIKE $1)
@@ -65,18 +67,56 @@ adminRouter.get('/planos', async (_req, res) => {
   res.json({ planos: rows })
 })
 
-adminRouter.get('/configuracoes', async (_req, res) => {
+adminRouter.get('/variaveis', async (_req, res) => {
   const { rows } = await query('SELECT id,chave,valor,descricao,atualizado_em FROM configuracoes_sistema ORDER BY chave')
-  res.json({ configuracoes: rows })
+  res.json({ variaveis: rows })
 })
 
-adminRouter.put('/configuracoes/:chave', validateBody(z.object({ valor: z.string().max(10_000).nullable(), descricao: z.string().trim().min(3).max(300) })), async (req, res) => {
-  const key = String(req.params.chave).trim().toLowerCase()
-  if (!/^[a-z][a-z0-9_]{2,99}$/.test(key)) throw new AppError(422, 'Chave de configuração inválida.', 'CHAVE_INVALIDA')
-  const { rows } = await query(`INSERT INTO configuracoes_sistema (chave,valor,descricao,atualizado_por)
-    VALUES ($1,$2,$3,$4) ON CONFLICT (chave) DO UPDATE SET valor=EXCLUDED.valor,descricao=EXCLUDED.descricao,
-    atualizado_por=EXCLUDED.atualizado_por RETURNING *`, [key,req.body.valor,req.body.descricao,req.usuarioId])
-  res.json({ configuracao: rows[0] })
+adminRouter.post('/variaveis', validateBody(systemVariableSchema), async (req, res) => {
+  try {
+    const variable = await withTransaction(async client => {
+      const { rows } = await client.query(`INSERT INTO configuracoes_sistema (chave,valor,descricao,atualizado_por)
+        VALUES ($1,$2::jsonb,$3,$4) RETURNING id,chave,valor,descricao,atualizado_em`,
+      [req.body.chave,JSON.stringify(req.body.valor),req.body.descricao,req.usuarioId])
+      await recordAudit(client,{usuarioId:req.usuarioId,acao:'VARIAVEL_SISTEMA_CRIADA',entidade:'configuracoes_sistema',registroId:rows[0]!.id,dadosNovos:rows[0],enderecoIp:req.ip})
+      return rows[0]
+    })
+    res.status(201).json({ variavel: variable })
+  } catch (error) {
+    if ((error as { code?: string }).code === '23505') throw new AppError(409, 'Já existe uma variável com essa chave.', 'CHAVE_DUPLICADA')
+    throw error
+  }
+})
+
+adminRouter.put('/variaveis/:variavelId', validateBody(systemVariableSchema), async (req, res) => {
+  const variableId = Number(req.params.variavelId)
+  if (!Number.isInteger(variableId) || variableId <= 0) throw new AppError(422, 'Variável inválida.', 'VARIAVEL_INVALIDA')
+  try {
+    const variable = await withTransaction(async client => {
+      const previous = await client.query('SELECT id,chave,valor,descricao,atualizado_em FROM configuracoes_sistema WHERE id=$1 FOR UPDATE',[variableId])
+      if (!previous.rows[0]) throw new AppError(404, 'Variável não encontrada.', 'VARIAVEL_NAO_ENCONTRADA')
+      const { rows } = await client.query(`UPDATE configuracoes_sistema SET chave=$2,valor=$3::jsonb,descricao=$4,atualizado_por=$5
+        WHERE id=$1 RETURNING id,chave,valor,descricao,atualizado_em`,
+      [variableId,req.body.chave,JSON.stringify(req.body.valor),req.body.descricao,req.usuarioId])
+      await recordAudit(client,{usuarioId:req.usuarioId,acao:'VARIAVEL_SISTEMA_ATUALIZADA',entidade:'configuracoes_sistema',registroId:variableId,dadosAnteriores:previous.rows[0],dadosNovos:rows[0],enderecoIp:req.ip})
+      return rows[0]
+    })
+    res.json({ variavel: variable })
+  } catch (error) {
+    if ((error as { code?: string }).code === '23505') throw new AppError(409, 'Já existe uma variável com essa chave.', 'CHAVE_DUPLICADA')
+    throw error
+  }
+})
+
+adminRouter.delete('/variaveis/:variavelId', async (req, res) => {
+  const variableId = Number(req.params.variavelId)
+  if (!Number.isInteger(variableId) || variableId <= 0) throw new AppError(422, 'Variável inválida.', 'VARIAVEL_INVALIDA')
+  await withTransaction(async client => {
+    const { rows } = await client.query('DELETE FROM configuracoes_sistema WHERE id=$1 RETURNING id,chave,valor,descricao,atualizado_em',[variableId])
+    if (!rows[0]) throw new AppError(404, 'Variável não encontrada.', 'VARIAVEL_NAO_ENCONTRADA')
+    await recordAudit(client,{usuarioId:req.usuarioId,acao:'VARIAVEL_SISTEMA_EXCLUIDA',entidade:'configuracoes_sistema',registroId:variableId,dadosAnteriores:rows[0],enderecoIp:req.ip})
+  })
+  res.status(204).send()
 })
 
 adminRouter.get('/status', async (_req, res) => {

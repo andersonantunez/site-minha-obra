@@ -5,13 +5,17 @@ import { recordAudit } from '../../shared/audit.js'
 import { AppError } from '../../shared/errors.js'
 import { requireProjectPermission } from '../../shared/projectAccess.js'
 import { validateBody } from '../../shared/validation.js'
-import { projectInputSchema } from './project.schemas.js'
+import { projectArchiveSchema, projectInputSchema } from './project.schemas.js'
 import { createProject, listUserProjects } from './project.service.js'
 
 export const projectsRouter = Router()
 projectsRouter.use(requireAuth)
 
-projectsRouter.get('/', async (req, res) => res.json({ projetos: await listUserProjects(req.usuarioId!) }))
+projectsRouter.get('/', async (req, res) => {
+  const status = String(req.query.status || 'ATIVOS')
+  if (!['ATIVOS', 'ARQUIVADOS', 'TODOS'].includes(status)) throw new AppError(422, 'Status de projeto inválido.', 'STATUS_PROJETO_INVALIDO')
+  res.json({ projetos: await listUserProjects(req.usuarioId!, status as 'ATIVOS' | 'ARQUIVADOS' | 'TODOS') })
+})
 
 projectsRouter.post('/', validateBody(projectInputSchema), async (req, res) => {
   const project = await createProject(req.usuarioId!, req.body, req.ip)
@@ -19,17 +23,15 @@ projectsRouter.post('/', validateBody(projectInputSchema), async (req, res) => {
 })
 
 projectsRouter.get('/:projetoId', requireProjectPermission('projeto.visualizar'), async (req, res) => {
-  const { rows } = await query(`SELECT p.id,p.nome,pa.codigo AS papel
-    FROM projetos p JOIN membros_projeto mp ON mp.projeto_id=p.id AND mp.usuario_id=$2 AND mp.ativo
-    JOIN papeis pa ON pa.id=mp.papel_id WHERE p.id=$1 AND p.excluido_em IS NULL`, [req.acessoProjeto!.projetoId, req.usuarioId])
-  res.json({ projeto: rows[0], permissoes: [...req.acessoProjeto!.permissoes], proprietario: req.acessoProjeto!.proprietario })
+  const { rows } = await query(`SELECT p.id,p.nome,$2::varchar AS papel
+    FROM projetos p WHERE p.id=$1 AND p.excluido_em IS NULL`, [req.acessoProjeto!.projetoId, req.acessoProjeto!.papel])
+  res.json({ projeto: rows[0], permissoes: [...req.acessoProjeto!.permissoes], proprietario: req.acessoProjeto!.proprietario, administradorSistema: req.acessoProjeto!.administradorSistema })
 })
 
 projectsRouter.get('/:projetoId/configuracoes', requireProjectPermission('configuracoes.visualizar'), async (req, res) => {
-  const { rows } = await query(`SELECT p.*,pa.codigo AS papel
-    FROM projetos p JOIN membros_projeto mp ON mp.projeto_id=p.id AND mp.usuario_id=$2 AND mp.ativo
-    JOIN papeis pa ON pa.id=mp.papel_id WHERE p.id=$1 AND p.excluido_em IS NULL`, [req.acessoProjeto!.projetoId, req.usuarioId])
-  res.json({ projeto: rows[0], permissoes: [...req.acessoProjeto!.permissoes], proprietario: req.acessoProjeto!.proprietario })
+  const { rows } = await query(`SELECT p.*,$2::varchar AS papel
+    FROM projetos p WHERE p.id=$1 AND p.excluido_em IS NULL`, [req.acessoProjeto!.projetoId, req.acessoProjeto!.papel])
+  res.json({ projeto: rows[0], permissoes: [...req.acessoProjeto!.permissoes], proprietario: req.acessoProjeto!.proprietario, administradorSistema: req.acessoProjeto!.administradorSistema })
 })
 
 projectsRouter.put('/:projetoId/configuracoes', requireProjectPermission('configuracoes.atualizar'), validateBody(projectInputSchema), async (req, res) => {
@@ -52,8 +54,24 @@ projectsRouter.put('/:projetoId/configuracoes', requireProjectPermission('config
   res.json({ projeto: project })
 })
 
+projectsRouter.put('/:projetoId/arquivamento', requireProjectPermission('configuracoes.atualizar'), validateBody(projectArchiveSchema), async (req, res) => {
+  if (!req.acessoProjeto!.proprietario && !req.acessoProjeto!.administradorSistema) throw new AppError(403, 'Somente o proprietário pode alterar o arquivamento do projeto.', 'ACESSO_NEGADO')
+  const project = await withTransaction(async (client) => {
+    const before = await client.query('SELECT * FROM projetos WHERE id=$1 AND excluido_em IS NULL FOR UPDATE', [req.acessoProjeto!.projetoId])
+    if (!before.rows[0]) throw new AppError(404, 'Projeto não encontrado.', 'PROJETO_NAO_ENCONTRADO')
+    const { rows } = await client.query(`UPDATE projetos
+      SET arquivado_em=CASE WHEN $2 THEN COALESCE(arquivado_em,NOW()) ELSE NULL END
+      WHERE id=$1
+      RETURNING id,nome,arquivado_em`, [req.acessoProjeto!.projetoId, req.body.arquivado])
+    const action = req.body.arquivado ? 'PROJETO_ARQUIVADO' : 'PROJETO_REATIVADO'
+    await recordAudit(client, { projetoId: req.acessoProjeto!.projetoId, usuarioId: req.usuarioId!, acao: action, entidade: 'projetos', registroId: req.acessoProjeto!.projetoId, dadosAnteriores: before.rows[0], dadosNovos: rows[0], enderecoIp: req.ip })
+    return rows[0]
+  })
+  res.json({ projeto: project })
+})
+
 projectsRouter.delete('/:projetoId', requireProjectPermission('projeto.atualizar'), async (req, res) => {
-  if (!req.acessoProjeto!.proprietario) throw new AppError(403, 'Somente o proprietário pode excluir o projeto.', 'ACESSO_NEGADO')
+  if (!req.acessoProjeto!.proprietario && !req.acessoProjeto!.administradorSistema) throw new AppError(403, 'Somente o proprietário pode excluir o projeto.', 'ACESSO_NEGADO')
   await withTransaction(async (client) => {
     const { rows } = await client.query('UPDATE projetos SET excluido_em=NOW() WHERE id=$1 AND excluido_em IS NULL RETURNING *', [req.acessoProjeto!.projetoId])
     if (!rows[0]) throw new AppError(404, 'Projeto não encontrado.', 'PROJETO_NAO_ENCONTRADO')

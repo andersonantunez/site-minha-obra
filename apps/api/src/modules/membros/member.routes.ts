@@ -7,6 +7,7 @@ import { requireAuth } from '../../shared/auth.js'
 import { recordAudit } from '../../shared/audit.js'
 import { sendInvitationEmail } from '../../shared/email.js'
 import { AppError } from '../../shared/errors.js'
+import { isSystemAdmin } from '../../shared/projectAccess.js'
 import { requireProjectPermission } from '../../shared/projectAccess.js'
 import { validateBody } from '../../shared/validation.js'
 
@@ -39,11 +40,13 @@ invitationsRouter.post('/:token/aceitar', requireAuth, async (req, res) => {
     if (userResult.rows[0]?.email.toLowerCase() !== invitation.email.toLowerCase()) {
       throw new AppError(403, 'O convite pertence a outra conta Google.', 'EMAIL_CONVITE_DIFERENTE')
     }
-    await client.query(`INSERT INTO membros_projeto (projeto_id,usuario_id,papel_id,convidado_por)
-      SELECT $1,$2,$3,criado_por FROM convites_projeto WHERE id=$4
-      ON CONFLICT (projeto_id,usuario_id) DO UPDATE SET papel_id=EXCLUDED.papel_id,ativo=TRUE,atualizado_em=NOW()`, [
-      invitation.projeto_id, req.usuarioId, invitation.papel_id, invitation.id,
-    ])
+    if (!await isSystemAdmin(req.usuarioId!)) {
+      await client.query(`INSERT INTO membros_projeto (projeto_id,usuario_id,papel_id,convidado_por)
+        SELECT $1,$2,$3,criado_por FROM convites_projeto WHERE id=$4
+        ON CONFLICT (projeto_id,usuario_id) DO UPDATE SET papel_id=EXCLUDED.papel_id,ativo=TRUE,atualizado_em=NOW()`, [
+        invitation.projeto_id, req.usuarioId, invitation.papel_id, invitation.id,
+      ])
+    }
     await client.query('UPDATE convites_projeto SET aceito_em=NOW() WHERE id=$1', [invitation.id])
     await recordAudit(client, { projetoId: invitation.projeto_id, usuarioId: req.usuarioId!, acao: 'CONVITE_ACEITO', entidade: 'convites_projeto', registroId: invitation.id, enderecoIp: req.ip })
     return { projetoId: invitation.projeto_id }
@@ -63,7 +66,7 @@ membersRouter.get('/', requireProjectPermission('membros.visualizar'), async (re
         LEFT JOIN permissoes_projeto_papel ppp ON ppp.projeto_id=mp.projeto_id AND ppp.papel_id=mp.papel_id AND ppp.permissao_id=pe.id
         LEFT JOIN permissoes_membro pm ON pm.membro_projeto_id=mp.id AND pm.permissao_id=pe.id) AS permissoes
       FROM membros_projeto mp JOIN usuarios u ON u.id=mp.usuario_id JOIN papeis pa ON pa.id=mp.papel_id
-      JOIN projetos p ON p.id=mp.projeto_id WHERE mp.projeto_id=$1 AND mp.ativo ORDER BY proprietario DESC,u.nome`, [req.acessoProjeto!.projetoId]),
+      JOIN projetos p ON p.id=mp.projeto_id WHERE mp.projeto_id=$1 AND mp.ativo AND NOT usuario_eh_administrador_sistema(u.id) ORDER BY proprietario DESC,u.nome`, [req.acessoProjeto!.projetoId]),
     query('SELECT id,chave,modulo,acao,descricao FROM permissoes ORDER BY modulo,acao'),
   ])
   res.json({ membros: members.rows, permissoesDisponiveis: permissions.rows })
@@ -79,8 +82,9 @@ membersRouter.get('/convites', requireProjectPermission('membros.visualizar'), a
 membersRouter.post('/convites', requireProjectPermission('membros.convidar'), validateBody(inviteSchema), async (req, res) => {
   const rawToken = randomBytes(32).toString('base64url')
   const data = await withTransaction(async (client) => {
-    const existing = await client.query(`SELECT 1 FROM membros_projeto mp JOIN usuarios u ON u.id=mp.usuario_id
-      WHERE mp.projeto_id=$1 AND LOWER(u.email)=LOWER($2) AND mp.ativo`, [req.acessoProjeto!.projetoId, req.body.email])
+    const existing = await client.query(`SELECT 1 FROM usuarios u LEFT JOIN membros_projeto mp
+      ON mp.usuario_id=u.id AND mp.projeto_id=$1 AND mp.ativo
+      WHERE LOWER(u.email)=LOWER($2) AND (usuario_eh_administrador_sistema(u.id) OR mp.id IS NOT NULL)`, [req.acessoProjeto!.projetoId, req.body.email])
     if (existing.rowCount) throw new AppError(409, 'Este usuário já participa do projeto.', 'MEMBRO_EXISTENTE')
     const { rows } = await client.query<{ id: number; projeto_nome: string; autor_nome: string }>(`INSERT INTO convites_projeto
       (projeto_id,email,papel_id,token_hash,expira_em,criado_por)
@@ -121,8 +125,9 @@ membersRouter.delete('/convites/:conviteId', requireProjectPermission('membros.c
 
 membersRouter.put('/:membroId/papel', requireProjectPermission('membros.atualizar'), validateBody(roleSchema), async (req, res) => {
   const memberId = Number(req.params.membroId)
-  const { rows } = await query(`UPDATE membros_projeto mp SET papel_id=pa.id FROM papeis pa,projetos p
-    WHERE mp.id=$1 AND mp.projeto_id=$2 AND p.id=mp.projeto_id AND p.proprietario_usuario_id<>mp.usuario_id AND pa.codigo=$3
+  const { rows } = await query(`UPDATE membros_projeto mp SET papel_id=pa.id FROM papeis pa,projetos p,usuarios u
+    WHERE mp.id=$1 AND mp.projeto_id=$2 AND p.id=mp.projeto_id AND u.id=mp.usuario_id AND NOT usuario_eh_administrador_sistema(u.id)
+      AND p.proprietario_usuario_id<>mp.usuario_id AND pa.codigo=$3
     RETURNING mp.id`, [memberId, req.acessoProjeto!.projetoId, req.body.papel])
   if (!rows[0]) throw new AppError(404, 'Membro não encontrado ou protegido.', 'MEMBRO_PROTEGIDO')
   res.json({ membroId: memberId, papel: req.body.papel })
@@ -132,7 +137,8 @@ membersRouter.put('/:membroId/permissoes', requireProjectPermission('membros.atu
   const memberId = Number(req.params.membroId)
   await withTransaction(async (client) => {
     const member = await client.query<{ proprietario: boolean }>(`SELECT (p.proprietario_usuario_id=mp.usuario_id) AS proprietario
-      FROM membros_projeto mp JOIN projetos p ON p.id=mp.projeto_id WHERE mp.id=$1 AND mp.projeto_id=$2 AND mp.ativo FOR UPDATE`, [memberId, req.acessoProjeto!.projetoId])
+      FROM membros_projeto mp JOIN projetos p ON p.id=mp.projeto_id JOIN usuarios u ON u.id=mp.usuario_id
+      WHERE mp.id=$1 AND mp.projeto_id=$2 AND mp.ativo AND NOT usuario_eh_administrador_sistema(u.id) FOR UPDATE OF mp`, [memberId, req.acessoProjeto!.projetoId])
     if (!member.rows[0]) throw new AppError(404, 'Membro não encontrado.', 'MEMBRO_NAO_ENCONTRADO')
     if (member.rows[0].proprietario) throw new AppError(409, 'As permissões essenciais do proprietário são protegidas.', 'PROPRIETARIO_PROTEGIDO')
     for (const permission of req.body.permissoes) {
@@ -153,8 +159,9 @@ membersRouter.put('/:membroId/permissoes', requireProjectPermission('membros.atu
 })
 
 membersRouter.delete('/:membroId', requireProjectPermission('membros.excluir'), async (req, res) => {
-  const { rows } = await query(`UPDATE membros_projeto mp SET ativo=FALSE FROM projetos p
-    WHERE mp.id=$1 AND mp.projeto_id=$2 AND p.id=mp.projeto_id AND p.proprietario_usuario_id<>mp.usuario_id RETURNING mp.id`, [
+  const { rows } = await query(`UPDATE membros_projeto mp SET ativo=FALSE FROM projetos p,usuarios u
+    WHERE mp.id=$1 AND mp.projeto_id=$2 AND p.id=mp.projeto_id AND u.id=mp.usuario_id AND NOT usuario_eh_administrador_sistema(u.id)
+      AND p.proprietario_usuario_id<>mp.usuario_id RETURNING mp.id`, [
     Number(req.params.membroId), req.acessoProjeto!.projetoId,
   ])
   if (!rows[0]) throw new AppError(404, 'Membro não encontrado ou proprietário protegido.', 'MEMBRO_PROTEGIDO')

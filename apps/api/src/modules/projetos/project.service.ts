@@ -16,7 +16,7 @@ export async function createProject(userId: number, input: ProjectInput, ip?: st
     if (!user) throw new AppError(401, 'Usuário inválido.', 'NAO_AUTENTICADO')
     if (user.limite_projetos_proprios !== null) {
       const countResult = await client.query<{ total: number }>(
-        'SELECT COUNT(*)::int AS total FROM projetos WHERE proprietario_usuario_id=$1 AND excluido_em IS NULL', [userId],
+        'SELECT COUNT(*)::int AS total FROM projetos WHERE proprietario_usuario_id=$1 AND excluido_em IS NULL AND arquivado_em IS NULL', [userId],
       )
       if (countResult.rows[0]!.total >= user.limite_projetos_proprios) {
         throw new AppError(409, 'Seu plano permite apenas um projeto próprio ativo.', 'LIMITE_PLANO_FREE')
@@ -48,18 +48,24 @@ async function getProjectById(client: PoolClient, projectId: number) {
   return rows[0]
 }
 
-export async function listUserProjects(userId: number) {
+export async function listUserProjects(userId: number, status: 'ATIVOS' | 'ARQUIVADOS' | 'TODOS' = 'ATIVOS') {
+  const archiveFilter = status === 'ATIVOS' ? 'AND p.arquivado_em IS NULL' : status === 'ARQUIVADOS' ? 'AND p.arquivado_em IS NOT NULL' : ''
   const { rows } = await query(`SELECT p.id,p.nome,p.descricao,p.cidade,p.estado,p.bairro,
-    p.data_inicio,p.previsao_termino,
-    p.area_construida,pa.codigo AS papel,(p.proprietario_usuario_id=$1) AS proprietario,
+    p.data_inicio,p.previsao_termino,p.arquivado_em,
+    p.area_construida,CASE WHEN usuario_eh_administrador_sistema(acesso.id) THEN 'ADMINISTRADOR_SISTEMA' ELSE pa.codigo END AS papel,
+    (p.proprietario_usuario_id=$1) AS proprietario,
     presentation.id AS imagem_apresentacao_id,presentation.url AS imagem_apresentacao_url,
     COALESCE((SELECT ROUND(AVG(CASE WHEN e.data_fim IS NOT NULL AND e.data_fim <= CURRENT_DATE THEN 100
       WHEN e.data_inicio IS NOT NULL AND e.data_inicio <= CURRENT_DATE THEN 50 ELSE 0 END)) FROM cronogramas e
       WHERE e.projeto_id=p.id AND e.excluido_em IS NULL),0) AS percentual_andamento
-    FROM membros_projeto mp JOIN projetos p ON p.id=mp.projeto_id AND p.excluido_em IS NULL
-    JOIN papeis pa ON pa.id=mp.papel_id
-    LEFT JOIN LATERAL (SELECT id,url FROM documentos_projeto d WHERE d.projeto_id=p.id
-      AND lower(d.categoria)=lower('Imagem de Apresentação') AND d.excluido_em IS NULL ORDER BY d.criado_em DESC,d.id DESC LIMIT 1) presentation ON TRUE
-    WHERE mp.usuario_id=$1 AND mp.ativo ORDER BY p.atualizado_em DESC`, [userId])
+    FROM usuarios acesso
+    JOIN projetos p ON p.excluido_em IS NULL
+    LEFT JOIN membros_projeto mp ON mp.projeto_id=p.id AND mp.usuario_id=$1 AND mp.ativo
+    LEFT JOIN papeis pa ON pa.id=mp.papel_id
+    LEFT JOIN LATERAL (SELECT d.id,d.url FROM documentos_projeto d JOIN documentos_projeto_categorias dc ON dc.documento_id=d.id JOIN categorias_documento c ON c.id=dc.categoria_id WHERE d.projeto_id=p.id
+      AND lower(c.nome)=lower('Imagem de Apresentação') AND c.excluido_em IS NULL AND d.excluido_em IS NULL ORDER BY d.criado_em DESC,d.id DESC LIMIT 1) presentation ON TRUE
+    WHERE acesso.id=$1 AND acesso.ativo AND (usuario_eh_administrador_sistema(acesso.id) OR mp.id IS NOT NULL)
+    ${archiveFilter}
+    ORDER BY (p.arquivado_em IS NOT NULL),p.atualizado_em DESC`, [userId])
   return rows
 }

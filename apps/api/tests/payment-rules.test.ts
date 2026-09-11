@@ -9,6 +9,12 @@ describe('regras do pagamento', () => {
     expect(paymentSchema.safeParse({ descricao: 'Teste', valor: 100 }).success).toBe(true)
   })
 
+  it('aceita pagamento sem valor informado', () => {
+    expect(paymentSchema.parse({ descricao: 'Teste' }).valor).toBeNull()
+    expect(paymentSchema.parse({ descricao: 'Teste', valor: '' }).valor).toBeNull()
+    expect(paymentSchema.parse({ descricao: 'Teste', valor: null }).valor).toBeNull()
+  })
+
   it('aceita observações detalhadas', () => {
     const result = paymentSchema.safeParse({ ...base, observacao: 'Manta 10 m² | Aplicação completa' })
     expect(result.success).toBe(true)

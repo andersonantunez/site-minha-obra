@@ -30,7 +30,7 @@ const moduleLabels: Record<string, string> = {
   documentos: 'Documentos',
   membros: 'Participantes',
   permissoes: 'Permissões',
-  configuracoes: 'Configurações',
+  configuracoes: 'Dados da obra',
 }
 
 export function PermissionsPage() {
