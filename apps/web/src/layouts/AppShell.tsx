@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import {
-  Building2, CalendarRange, CheckSquare2, ChevronDown, FileText,
+  Building2, CalendarRange, Check, CheckSquare2, Copy, FileText,
   Landmark, LayoutDashboard, Menu, ReceiptText, Settings, ShieldCheck, Tags, Users, X,
 } from 'lucide-react'
 import { useState } from 'react'
@@ -8,11 +8,12 @@ import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { hasProjectPermission, roleLabel, type ProjectAccessInfo } from '../lib/projectAccess'
+import { TopbarBackButton } from '../components/TopbarBackButton'
 import { TopbarUser } from '../components/TopbarUser'
 
 const navigation: { group?: string; items: { label: string; icon: typeof LayoutDashboard; path: string; permission: string }[] }[] = [
   { items: [
-    { label: 'Dados da obra', icon: Settings, path: 'configuracoes', permission: 'configuracoes.visualizar' },
+    { label: 'Dados da obra', icon: Settings, path: 'dados-obra', permission: 'configuracoes.visualizar' },
     { label: 'Visão geral', icon: LayoutDashboard, path: '', permission: 'visao_geral.visualizar' },
   ] },
   { group: 'PLANEJAMENTO', items: [
@@ -38,15 +39,24 @@ export function AppShell() {
   const { user, signOut } = useAuth()
   const navigate = useNavigate()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [addressCopied, setAddressCopied] = useState(false)
   const { data } = useQuery({ queryKey: ['projeto', projetoId], queryFn: () => api<ProjectAccessInfo>(`/projetos/${projetoId}`), enabled: Boolean(projetoId) })
   const base = `/app/projetos/${projetoId}`
+  const project = data?.projeto
+  const addressStreet=[project?.logradouro,project?.numero].filter(Boolean).join(', ')
+  const addressDetails=[addressStreet,project?.complemento].filter(Boolean).join(' · ')
+  const addressLocality=[project?.cidade,project?.estado].filter(Boolean).join(' - ')
+  const addressNeighborhood=[project?.bairro,addressLocality].filter(Boolean).join(' · ')
+  const fullAddress=[project?.cep,addressStreet,project?.complemento,project?.bairro,project?.cidade,project?.estado].filter(Boolean).join(', ')
+  const copyAddress=async()=>{if(!fullAddress)return;await navigator.clipboard.writeText(fullAddress);setAddressCopied(true);window.setTimeout(()=>setAddressCopied(false),1800)}
 
   return <div className="app-layout">
     <aside className={mobileOpen ? 'app-sidebar open' : 'app-sidebar'}>
       <div className="sidebar-brand"><a className="brand" href="/"><span className="brand-mark">M</span><span>MinhaObra</span></a><button onClick={() => setMobileOpen(false)}><X /></button></div>
-      <button className="project-switcher" onClick={() => navigate('/app')}>
-        <span><Building2 /><i><small>PROJETO ATUAL</small><strong>{data?.projeto.nome || 'Carregando…'}</strong></i></span><ChevronDown size={16} />
-      </button>
+      <section className="project-current" aria-label="Projeto atual">
+        <div className="project-current-header"><span className="project-current-icon"><Building2 /></span><div className="project-current-heading"><small>PROJETO ATUAL</small><strong>{project?.nome || 'Carregando…'}</strong></div></div>
+        {fullAddress&&<div className="project-current-address">{project?.cep&&<span className="project-address-cep"><small>CEP</small><b>{project.cep}</b></span>}{(addressDetails||addressNeighborhood)&&<div className="project-address-details">{addressDetails&&<span className="project-address-street">{addressDetails}</span>}{addressNeighborhood&&<span className="project-address-locality">{addressNeighborhood}</span>}</div>}<button type="button" onClick={()=>void copyAddress()} aria-label="Copiar endereço" title={addressCopied?'Endereço copiado':'Copiar endereço'}>{addressCopied?<Check/>:<Copy/>}</button><small className="project-address-feedback" role="status" aria-live="polite">{addressCopied?'Endereço copiado':''}</small></div>}
+      </section>
       <nav className="app-navigation">
         {navigation.map((section, index) => {
           const items = section.items.filter((item) => hasProjectPermission(data, item.permission))
@@ -63,7 +73,7 @@ export function AppShell() {
       <header className="app-topbar">
         <button className="mobile-nav-button" onClick={() => setMobileOpen(true)}><Menu /></button>
         <div className="topbar-spacer" />
-        <div className="topbar-actions">{user?.administrador_sistema && <NavLink className="system-admin-topbar-link" to="/admin"><Settings />Admin</NavLink>}<TopbarUser user={user} role={roleLabel(data?.projeto.papel)} onSignOut={() => void signOut().then(() => navigate('/'))} /></div>
+        <div className="topbar-actions"><TopbarBackButton />{user?.administrador_sistema && <NavLink className="system-admin-topbar-link" to="/admin"><Settings />Admin</NavLink>}<TopbarUser user={user} role={roleLabel(data?.projeto.papel)} onSignOut={() => void signOut().then(() => navigate('/'))} /></div>
       </header>
       <main className="app-content"><Outlet context={{ project: data?.projeto, access: data }} /></main>
     </div>

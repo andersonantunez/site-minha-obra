@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { Navigate, useOutletContext } from 'react-router-dom'
 
 export type ProjectAccessInfo = {
-  projeto: { id: number; nome: string; papel?: string }
+  projeto: { id: number; nome: string; papel?: string; cep?: string | null; logradouro?: string | null; numero?: string | null; complemento?: string | null; bairro?: string | null; cidade?: string | null; estado?: string | null }
   permissoes: string[]
   proprietario: boolean
   administradorSistema: boolean
@@ -32,7 +32,7 @@ export function ProjectPermissionRoute({ permission, children }: { permission: s
     ['visao_geral.visualizar', ''], ['etapas.visualizar', 'cronograma'], ['tarefas.visualizar', 'tarefas'],
     ['orcamento.visualizar', 'fluxo-caixa'], ['pagamentos.visualizar', 'pagamentos'],
     ['categorias.visualizar', 'categorias-documentos'], ['documentos.visualizar', 'documentos'],
-    ['membros.visualizar', 'participantes'], ['permissoes.visualizar', 'permissoes'], ['configuracoes.visualizar', 'configuracoes'],
+    ['membros.visualizar', 'participantes'], ['permissoes.visualizar', 'permissoes'], ['configuracoes.visualizar', 'dados-obra'],
   ] as const
   const available = destinations.find(([candidate]) => hasProjectPermission(access, candidate))
   const base = `/app/projetos/${access.projeto.id}`

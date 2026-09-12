@@ -10,6 +10,7 @@ import { requireProjectPermission } from '../../shared/projectAccess.js'
 import { validateBody } from '../../shared/validation.js'
 import { SETTLED_PAYMENT_STATUSES } from '../pagamentos/payment-status.js'
 import { createSchedulePdf, createScheduleWorkbook, getScheduleReport } from '../relatorios/planning-report.service.js'
+import { activeScheduleStageOrder, activeScheduleStageWhere } from './stage-query.js'
 
 const nullableDate = z.union([z.iso.date(), z.literal(''), z.null()]).optional().transform((value) => value || null)
 const scheduleSchema = z.object({
@@ -121,10 +122,10 @@ stagesRouter.get('/', requireProjectPermission('etapas.visualizar'), async (req,
       ELSE c.valor_previsto END::numeric(15,2) AS valor_previsto,
     COALESCE((SELECT SUM(p.valor) FROM pagamentos p WHERE p.projeto_id=c.projeto_id AND p.excluido_em IS NULL AND p.status=ANY($3::varchar[])
       AND (p.etapa_id=c.id OR (c.parent_id IS NULL AND p.etapa_id IN (SELECT f.id FROM cronogramas f WHERE f.parent_id=c.id AND f.excluido_em IS NULL)))),0)::numeric(15,2) AS valor_pago
-    FROM cronogramas c WHERE c.projeto_id=$1 AND c.excluido_em IS NULL
+    FROM cronogramas c WHERE c.projeto_id=$1 AND ${activeScheduleStageWhere('c')}
       AND ($2='%%' OR c.nome ILIKE $2 OR c.descricao ILIKE $2 OR EXISTS (
         SELECT 1 FROM cronogramas f WHERE f.parent_id=c.id AND f.excluido_em IS NULL AND (f.nome ILIKE $2 OR f.descricao ILIKE $2)))
-    ORDER BY COALESCE(c.parent_id,c.id),c.parent_id NULLS FIRST,c.ordem,c.id`, [projectId, `%${search}%`, SETTLED_PAYMENT_STATUSES])
+    ORDER BY ${activeScheduleStageOrder('c')}`, [projectId, `%${search}%`, SETTLED_PAYMENT_STATUSES])
   const parents = rows.filter((row) => row.parent_id === null)
   const tree = parents.map((parent) => ({ ...parent, subitens: rows.filter((row) => Number(row.parent_id) === Number(parent.id)) }))
   res.json({ etapas: rows, opcoes: rows, registros: rows, arvore: tree, pagina: 1, porPagina: rows.length, total: parents.length, totalRegistros: rows.length })

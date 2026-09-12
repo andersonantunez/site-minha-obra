@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import multer from 'multer'
 import { query, withTransaction } from '../../config/database.js'
 import { requireAuth } from '../../shared/auth.js'
 import { recordAudit } from '../../shared/audit.js'
@@ -6,6 +7,8 @@ import { AppError } from '../../shared/errors.js'
 import { requireProjectPermission } from '../../shared/projectAccess.js'
 import { validateBody } from '../../shared/validation.js'
 import { projectArchiveSchema, projectInputSchema } from './project.schemas.js'
+import { parseProjectBackupJson } from './project-backup.schemas.js'
+import { exportProjectBackup, importProjectBackup } from './project-backup.service.js'
 import { createProject, listUserProjects } from './project.service.js'
 
 export const projectsRouter = Router()
@@ -22,19 +25,36 @@ projectsRouter.post('/', validateBody(projectInputSchema), async (req, res) => {
   res.status(201).json({ projeto: project })
 })
 
+const projectBackupUpload = multer({ storage: multer.memoryStorage(), limits: { files: 1, fileSize: 100 * 1024 * 1024 } })
+
+projectsRouter.get('/:projetoId/backup', requireProjectPermission('configuracoes.atualizar'), async (req, res) => {
+  const backup = await exportProjectBackup(req.acessoProjeto!.projetoId)
+  const slug = backup.backup.project.nome.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'') || 'projeto'
+  const date = new Date().toISOString().slice(0,10)
+  res.setHeader('Content-Type','application/json; charset=utf-8')
+  res.setHeader('Content-Disposition',`attachment; filename="backup-${slug}-${date}.json"`)
+  res.send(JSON.stringify(backup,null,2))
+})
+
+projectsRouter.post('/:projetoId/backup/importar', requireProjectPermission('configuracoes.atualizar'), projectBackupUpload.single('arquivo'), async (req, res) => {
+  if (!req.file) throw new AppError(422, 'Selecione um arquivo JSON de backup.', 'BACKUP_ARQUIVO_AUSENTE')
+  const result = await importProjectBackup(req.usuarioId!,parseProjectBackupJson(req.file.buffer.toString('utf8')),req.ip)
+  res.status(201).json(result)
+})
+
 projectsRouter.get('/:projetoId', requireProjectPermission('projeto.visualizar'), async (req, res) => {
-  const { rows } = await query(`SELECT p.id,p.nome,$2::varchar AS papel
+  const { rows } = await query(`SELECT p.id,p.nome,p.cep,p.logradouro,p.numero,p.complemento,p.bairro,p.cidade,p.estado,$2::varchar AS papel
     FROM projetos p WHERE p.id=$1 AND p.excluido_em IS NULL`, [req.acessoProjeto!.projetoId, req.acessoProjeto!.papel])
   res.json({ projeto: rows[0], permissoes: [...req.acessoProjeto!.permissoes], proprietario: req.acessoProjeto!.proprietario, administradorSistema: req.acessoProjeto!.administradorSistema })
 })
 
-projectsRouter.get('/:projetoId/configuracoes', requireProjectPermission('configuracoes.visualizar'), async (req, res) => {
+projectsRouter.get('/:projetoId/dados-obra', requireProjectPermission('configuracoes.visualizar'), async (req, res) => {
   const { rows } = await query(`SELECT p.*,$2::varchar AS papel
     FROM projetos p WHERE p.id=$1 AND p.excluido_em IS NULL`, [req.acessoProjeto!.projetoId, req.acessoProjeto!.papel])
   res.json({ projeto: rows[0], permissoes: [...req.acessoProjeto!.permissoes], proprietario: req.acessoProjeto!.proprietario, administradorSistema: req.acessoProjeto!.administradorSistema })
 })
 
-projectsRouter.put('/:projetoId/configuracoes', requireProjectPermission('configuracoes.atualizar'), validateBody(projectInputSchema), async (req, res) => {
+projectsRouter.put('/:projetoId/dados-obra', requireProjectPermission('configuracoes.atualizar'), validateBody(projectInputSchema), async (req, res) => {
   const project = await withTransaction(async (client) => {
     const before = await client.query('SELECT * FROM projetos WHERE id=$1 AND excluido_em IS NULL FOR UPDATE', [req.acessoProjeto!.projetoId])
     if (!before.rows[0]) throw new AppError(404, 'Projeto não encontrado.', 'PROJETO_NAO_ENCONTRADO')

@@ -45,7 +45,8 @@ export function App() {
         <Route path="documentos" element={<ProjectPermissionRoute permission="documentos.visualizar"><DocumentsPage /></ProjectPermissionRoute>} />
         <Route path="participantes" element={<ProjectPermissionRoute permission="membros.visualizar"><MembersPage /></ProjectPermissionRoute>} />
         <Route path="permissoes" element={<ProjectPermissionRoute permission="permissoes.visualizar"><PermissionsPage /></ProjectPermissionRoute>} />
-        <Route path="configuracoes" element={<ProjectPermissionRoute permission="configuracoes.visualizar"><SettingsPage /></ProjectPermissionRoute>} />
+        <Route path="configuracoes" element={<Navigate to="../dados-obra" replace />} />
+        <Route path="dados-obra" element={<ProjectPermissionRoute permission="configuracoes.visualizar"><SettingsPage /></ProjectPermissionRoute>} />
       </Route>
       <Route path="/admin" element={<ProtectedRoute admin><AdminPage /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -13,6 +13,7 @@ import { readStoredFile, safeDownloadName, saveUploadedFile } from '../../shared
 import { identifyStore, validateHttpUrl } from '../../shared/url.js'
 import { validateBody } from '../../shared/validation.js'
 import { assignDocumentCategoryByName } from '../arquivos/document-categories.js'
+import { activeScheduleStageOrder, activeScheduleStageWhere } from '../etapas/stage-query.js'
 import { createPaymentPdf, createPaymentWorkbook, getPaymentReport } from './payment-report.service.js'
 import { normalizePaymentStatus, PAYMENT_STATUS_VALUES, type PaymentStatus } from './payment-status.js'
 import { linkSchema, paymentSchema, paymentStatusSchema } from './payment.schemas.js'
@@ -122,7 +123,8 @@ paymentsRouter.get('/relatorio.xlsx', requireProjectPermission('pagamentos.expor
 
 paymentsRouter.get('/etapas', requireProjectPermission('pagamentos.visualizar'), async (req, res) => {
   const { rows } = await query(`SELECT id,parent_id,nome,ordem,cor FROM cronogramas
-    WHERE projeto_id=$1 AND excluido_em IS NULL ORDER BY COALESCE(parent_id,id),parent_id NULLS FIRST,ordem,id`, [req.acessoProjeto!.projetoId])
+    WHERE projeto_id=$1 AND ${activeScheduleStageWhere('cronogramas')}
+    ORDER BY ${activeScheduleStageOrder('cronogramas')}`, [req.acessoProjeto!.projetoId])
   res.json({ etapas: rows })
 })
 

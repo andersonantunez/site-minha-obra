@@ -4,7 +4,7 @@ import { useState, type FormEvent } from 'react'
 import { useParams } from 'react-router-dom'
 import { AddButton, EmptyState, ErrorNotice, PageHeader, SortableHeader } from '../components/Ui'
 import { api, jsonBody } from '../lib/api'
-import { useSortableData } from '../lib/sorting'
+import { compareByOrderedValues, useSortableData } from '../lib/sorting'
 import { useProjectAccess } from '../lib/projectAccess'
 
 type TaskStatus = 'PARADO' | 'INICIADO' | 'FINALIZADO'
@@ -28,7 +28,11 @@ export function TasksPage() {
   if (statusFilter) query.set('status', statusFilter)
   if (priorityFilter) query.set('prioridade', priorityFilter)
   const { data, error } = useQuery({ queryKey: ['tarefas', projetoId, search, statusFilter, priorityFilter], queryFn: () => api<{ tarefas: Task[]; total: number }>(`${endpoint}?${query}`) })
-  const taskSort = useSortableData(data?.tarefas || [], 'descricao')
+  const taskSort = useSortableData(data?.tarefas || [], 'status', 'asc', 'last', (left, right) => {
+    const statusOrder: Record<TaskStatus, number> = { INICIADO: 1, PARADO: 2, FINALIZADO: 3 }
+    const priorityOrder: Record<TaskPriority, number> = { ALTA: 1, BAIXA: 2 }
+    return compareByOrderedValues(left, right, { status: statusOrder, prioridade: priorityOrder })
+  })
   const refresh = () => void client.invalidateQueries({ queryKey: ['tarefas', projetoId] })
   const save = useMutation({ mutationFn: ({ id, payload }: { id?: number; payload: Record<string, unknown> }) => api(`${endpoint}${id ? `/${id}` : ''}`, { method: id ? 'PUT' : 'POST', ...jsonBody(payload) }), onSuccess: () => { setEditing(null); refresh() } })
   const remove = useMutation({ mutationFn: (id: number) => api(`${endpoint}/${id}`, { method: 'DELETE' }), onSuccess: refresh })
@@ -52,5 +56,5 @@ export function TasksPage() {
 }
 
 function TaskRows({task,expanded,onExpand,canUpdate,canDelete,onStatusChange,statusUpdating,onEdit,onDelete}:{task:Task;expanded:boolean;onExpand:()=>void;canUpdate:boolean;canDelete:boolean;onStatusChange:(status:TaskStatus)=>void;statusUpdating:boolean;onEdit:()=>void;onDelete:()=>void}){
-  return <><tr className={`task-row status-${task.status.toLowerCase()}`} onClick={onExpand}><td><strong>{task.descricao}</strong></td><td><select className={`task-status-select status-${task.status.toLowerCase()}`} value={task.status} disabled={statusUpdating||!canUpdate} aria-label={`Alterar status de ${task.descricao}`} onClick={event=>event.stopPropagation()} onChange={event=>onStatusChange(event.target.value as TaskStatus)}>{statusOptions.map(option=><option value={option.value} key={option.value}>{option.label}</option>)}</select></td><td><span className={`task-priority priority-${task.prioridade.toLowerCase()}`}>{optionLabel(priorityOptions,task.prioridade)}</span></td><td className="row-actions">{canUpdate&&<button title="Editar tarefa" onClick={event=>{event.stopPropagation();onEdit()}}><Pencil /></button>}{canDelete&&<button className="danger" title="Excluir tarefa" onClick={event=>{event.stopPropagation();onDelete()}}><Trash2 /></button>}</td></tr>{expanded&&<tr className="task-details-row"><td colSpan={4}><strong>Detalhes da tarefa</strong><p>{task.observacao||'Nenhum detalhe informado.'}</p></td></tr>}</>
+  return <><tr className={`task-row status-colored-row status-${task.status.toLowerCase()}`} onClick={onExpand}><td><strong>{task.descricao}</strong></td><td><select className={`task-status-select status-${task.status.toLowerCase()}`} value={task.status} disabled={statusUpdating||!canUpdate} aria-label={`Alterar status de ${task.descricao}`} onClick={event=>event.stopPropagation()} onChange={event=>onStatusChange(event.target.value as TaskStatus)}>{statusOptions.map(option=><option value={option.value} key={option.value}>{option.label}</option>)}</select></td><td><span className={`task-priority priority-${task.prioridade.toLowerCase()}`}>{optionLabel(priorityOptions,task.prioridade)}</span></td><td className="row-actions">{canUpdate&&<button title="Editar tarefa" onClick={event=>{event.stopPropagation();onEdit()}}><Pencil /></button>}{canDelete&&<button className="danger" title="Excluir tarefa" onClick={event=>{event.stopPropagation();onDelete()}}><Trash2 /></button>}</td></tr>{expanded&&<tr className="task-details-row"><td colSpan={4}><strong>Detalhes da tarefa</strong><p>{task.observacao||'Nenhum detalhe informado.'}</p></td></tr>}</>
 }
