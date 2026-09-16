@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { paymentSchema } from '../src/modules/pagamentos/payment.schemas.js'
+import { moveItemsSchema, paymentSchema, purchaseItemSchema, purchaseSchema } from '../src/modules/pagamentos/payment.schemas.js'
 import { normalizePaymentStatus, PAYMENT_STATUS_VALUES } from '../src/modules/pagamentos/payment-status.js'
 
 const base = { descricao: 'Impermeabilização', valor: 2500, status: 'EM_NEGOCIACAO' }
@@ -36,5 +36,40 @@ describe('regras do pagamento', () => {
 
   it('não aceita valor negativo', () => {
     expect(paymentSchema.safeParse({ ...base, valor: -1 }).success).toBe(false)
+  })
+
+  it('valida a Compra sem persistir classificação de documento', () => {
+    const budget = purchaseSchema.parse({ descricao: 'Compra de materiais' })
+    const invoice = purchaseSchema.parse({ descricao: 'Compra faturada', numero_nota_fiscal: 'NF-123' })
+    expect(budget.numero_nota_fiscal).toBeNull()
+    expect(invoice.numero_nota_fiscal).toBe('NF-123')
+    expect(budget).not.toHaveProperty('classificacao')
+    expect(invoice).not.toHaveProperty('classificacao')
+  })
+
+  it('valida item com quantidade e valor unitário, sem dados do fornecedor', () => {
+    const item = purchaseItemSchema.parse({ descricao: 'Tubo PVC', quantidade: '2', unidade: 'Unidades', valor_unitario: '12.50', links_cotacao: ['https://loja.example/item'] })
+    expect(item.quantidade).toBe(2)
+    expect(item.valor_unitario).toBe(12.5)
+    expect(item).not.toHaveProperty('fornecedor')
+    expect(item).not.toHaveProperty('documentos')
+    expect(purchaseItemSchema.parse({ descricao: 'Item sem quantidade', valor_unitario: '1,2345' }).quantidade).toBeNull()
+  })
+
+  it('aceita total manual e descontos independentes no item e na compra', () => {
+    const item = purchaseItemSchema.parse({ descricao: 'Tijolos', quantidade: '3000', valor_unitario: '1,8333', valor_desconto: '10,00', valor_total: '5.500,00' })
+    const purchase = purchaseSchema.parse({ descricao: 'Compra de tijolos', observacao: 'Entrega parcial', valor_desconto: '25,00' })
+    expect(item.valor_total).toBe(5500)
+    expect(item.valor_desconto).toBe(10)
+    expect(purchase.valor_desconto).toBe(25)
+    expect(purchase.observacao).toBe('Entrega parcial')
+  })
+
+  it('remove IDs repetidos ao mover vários itens', () => {
+    expect(moveItemsSchema.parse({ item_ids: [7,7,8], compra_id: 2 }).item_ids).toEqual([7,8])
+  })
+
+  it('aceita o prefixo visual +55 sem telefone em um campo opcional', () => {
+    expect(purchaseSchema.parse({ descricao: 'Compra sem telefone', contato_fornecedor: '+55 ' }).contato_fornecedor).toBeNull()
   })
 })

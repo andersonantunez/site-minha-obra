@@ -32,7 +32,7 @@ export async function createProject(userId: number, input: ProjectInput, ip?: st
     await client.query(`INSERT INTO membros_projeto (projeto_id,usuario_id,papel_id)
       SELECT $1,$2,id FROM papeis WHERE codigo='PROPRIETARIO'`, [projectId, userId])
     await client.query(`INSERT INTO categorias_documento (projeto_id,nome,criado_por) VALUES
-      ($1,'Pagamentos',$2),($1,'Render',$2),($1,'Planta Executiva',$2),($1,'Planta Hidráulica',$2),
+      ($1,'Despesas',$2),($1,'Render',$2),($1,'Planta Executiva',$2),($1,'Planta Hidráulica',$2),
       ($1,'Planta Elétrica',$2),($1,'Planta Estrutural',$2),($1,'Liberação Prefeitura',$2),
       ($1,'Contrato',$2),($1,'Unificação dos Terrenos',$2),($1,'Consórcio',$2),($1,'INSS Obras',$2),
       ($1,'Financiamento Caixa',$2),($1,'Consórcio Sicredi',$2),($1,'Outros',$2)`, [projectId,userId])

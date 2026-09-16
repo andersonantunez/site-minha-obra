@@ -67,7 +67,7 @@ budgetRouter.get('/', requireProjectPermission('orcamento.visualizar'), async (r
   if (start && end && end < start) throw new AppError(422, 'A data final não pode ser anterior à data inicial.', 'PERIODO_INVALIDO')
   const params = [req.acessoProjeto!.projetoId,SETTLED_PAYMENT_STATUSES,`%${search}%`,start,end,includeFuture]
   const [items, totals] = await Promise.all([
-      query(`${cashFlowCte} SELECT id,origem,origem_id,data,descricao,detalhes,quantidade,unidade,fornecedor,payment_status,data_agendamento,data_entrega,forma_pagamento,chave_pix,contato_fornecedor,nome_contato_fornecedor,payment_etapa,payment_observacao,valor,editavel,(data>CURRENT_DATE) AS provisionado
+      query(`${cashFlowCte} SELECT id,origem,payment_record_type,origem_id,data,descricao,detalhes,quantidade,unidade,fornecedor,payment_status,data_agendamento,data_entrega,forma_pagamento,chave_pix,contato_fornecedor,nome_contato_fornecedor,payment_etapa,payment_observacao,valor,editavel,(data>CURRENT_DATE) AS provisionado
       FROM fluxo ${cashFlowFilter} ORDER BY data DESC,origem_id DESC LIMIT $7 OFFSET $8`, [...params,pageSize,(page-1)*pageSize]),
     query<{ total: number; total_entrada: string; total_saida: string; saldo_atual: string; saldo_com_provisao: string }>(`${cashFlowCte}
       SELECT COUNT(*)::int AS total,
@@ -79,6 +79,28 @@ budgetRouter.get('/', requireProjectPermission('orcamento.visualizar'), async (r
   ])
   const summary = totals.rows[0]!
   res.json({ itens: items.rows, pagina: page, porPagina: pageSize, total: summary.total, indicadores: summary })
+})
+
+budgetRouter.get('/despesas/:despesaId/detalhes', requireProjectPermission('orcamento.visualizar'), async (req, res) => {
+  const projetoId = req.acessoProjeto!.projetoId
+  const despesaId = z.coerce.number().int().positive().parse(req.params.despesaId)
+  const { rows } = await query(`SELECT d.id,d.descricao,d.status,d.forma_pagamento,d.nome_contato_fornecedor,d.contato_fornecedor,
+      d.numero_nota_fiscal,d.data_emissao,d.data_agendamento,d.data_entrega,d.observacao,
+      CASE WHEN COALESCE(pai.id,e.id) IS NULL THEN NULL ELSE 'ETAPA '||COALESCE(pai.ordem,e.ordem)||' - '||COALESCE(pai.nome,e.nome) END AS etapa
+    FROM despesas d
+    LEFT JOIN cronogramas e ON e.id=d.etapa_id
+    LEFT JOIN cronogramas pai ON pai.id=e.parent_id
+    WHERE d.id=$1 AND d.projeto_id=$2 AND d.excluido_em IS NULL`, [despesaId, projetoId])
+  const despesa = rows[0]
+  if (!despesa) throw new AppError(404, 'Despesa não encontrada.', 'DESPESA_NAO_ENCONTRADA')
+  const itemTotal = `CASE WHEN i.valor_total_manual THEN i.valor WHEN i.valor_unitario IS NULL THEN i.valor ELSE ROUND((COALESCE(i.quantidade,1)*i.valor_unitario)-COALESCE(i.valor_desconto,0),2) END`
+  const [itens, documentos] = await Promise.all([
+    query(`SELECT i.id,i.descricao,i.quantidade,i.unidade,i.observacao,i.valor_unitario,i.valor_desconto,${itemTotal}::numeric(15,2) AS valor_total
+      FROM pagamentos i WHERE i.compra_id=$1 AND i.projeto_id=$2 AND i.excluido_em IS NULL ORDER BY i.ordem,i.id`, [despesaId, projetoId]),
+    query(`SELECT id,titulo,tipo_origem,url,nome_original,tipo_mime FROM documentos_projeto
+      WHERE compra_id=$1 AND projeto_id=$2 AND excluido_em IS NULL ORDER BY criado_em DESC`, [despesaId, projetoId]),
+  ])
+  res.json({ despesa: { ...despesa, itens: itens.rows, documentos: documentos.rows } })
 })
 
 function reportFilters(req: { query: Record<string,unknown> }) {

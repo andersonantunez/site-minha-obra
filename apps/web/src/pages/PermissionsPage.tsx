@@ -24,7 +24,7 @@ const moduleLabels: Record<string, string> = {
   visao_geral: 'Visão Geral',
   etapas: 'Cronograma',
   fluxo_caixa: 'Fluxo de Caixa',
-  pagamentos: 'Pagamentos',
+  pagamentos: 'Despesas',
   tarefas: 'Tarefas',
   categorias: 'Categorias',
   documentos: 'Documentos',

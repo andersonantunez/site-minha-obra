@@ -12,7 +12,7 @@ const DocumentCategoriesPage = lazy(() => import('./pages/DocumentCategoriesPage
 const BudgetPage = lazy(() => import('./pages/BudgetPage').then((module) => ({ default: module.BudgetPage })))
 const InvitePage = lazy(() => import('./pages/InvitePage').then((module) => ({ default: module.InvitePage })))
 const MembersPage = lazy(() => import('./pages/MembersPage').then((module) => ({ default: module.MembersPage })))
-const PaymentsPage = lazy(() => import('./pages/PaymentsPage').then((module) => ({ default: module.PaymentsPage })))
+const ExpensesPage = lazy(() => import('./pages/ExpensesPage').then((module) => ({ default: module.ExpensesPage })))
 const PermissionsPage = lazy(() => import('./pages/PermissionsPage').then((module) => ({ default: module.PermissionsPage })))
 const ProjectDashboardPage = lazy(() => import('./pages/ProjectDashboardPage').then((module) => ({ default: module.ProjectDashboardPage })))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage').then((module) => ({ default: module.ProjectsPage })))
@@ -37,7 +37,8 @@ export function App() {
         <Route path="fluxo-caixa" element={<ProjectPermissionRoute permission="orcamento.visualizar"><BudgetPage /></ProjectPermissionRoute>} />
         <Route path="cronograma" element={<ProjectPermissionRoute permission="etapas.visualizar"><StagesPage /></ProjectPermissionRoute>} />
         <Route path="tarefas" element={<ProjectPermissionRoute permission="tarefas.visualizar"><TasksPage /></ProjectPermissionRoute>} />
-        <Route path="pagamentos" element={<ProjectPermissionRoute permission="pagamentos.visualizar"><PaymentsPage /></ProjectPermissionRoute>} />
+        <Route path="pagamentos" element={<Navigate to="../despesas" replace />} />
+        <Route path="despesas" element={<ProjectPermissionRoute permission="pagamentos.visualizar"><ExpensesPage /></ProjectPermissionRoute>} />
         <Route path="indicadores" element={<Navigate to=".." replace />} />
         <Route path="renders" element={<Navigate to="../documentos" replace />} />
         <Route path="plantas" element={<Navigate to="../documentos" replace />} />

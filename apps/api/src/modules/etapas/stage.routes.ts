@@ -9,6 +9,7 @@ import { parseBrazilianNumber, parseImportContent } from '../../shared/importPar
 import { requireProjectPermission } from '../../shared/projectAccess.js'
 import { validateBody } from '../../shared/validation.js'
 import { SETTLED_PAYMENT_STATUSES } from '../pagamentos/payment-status.js'
+import { paymentFinancialCte } from '../pagamentos/purchase-financial.query.js'
 import { createSchedulePdf, createScheduleWorkbook, getScheduleReport } from '../relatorios/planning-report.service.js'
 import { activeScheduleStageOrder, activeScheduleStageWhere } from './stage-query.js'
 
@@ -116,11 +117,11 @@ stagesRouter.use(requireAuth)
 stagesRouter.get('/', requireProjectPermission('etapas.visualizar'), async (req, res) => {
   const search = String(req.query.busca || '').trim()
   const projectId = req.acessoProjeto!.projetoId
-  const { rows } = await query(`SELECT c.id,c.parent_id,c.nome,c.descricao,c.cor,c.data_inicio_previsto,c.data_fim_previsto,c.data_inicio,c.data_fim,c.ordem,c.criado_em,c.atualizado_em,
+  const { rows } = await query(`WITH ${paymentFinancialCte} SELECT c.id,c.parent_id,c.nome,c.descricao,c.cor,c.data_inicio_previsto,c.data_fim_previsto,c.data_inicio,c.data_fim,c.ordem,c.criado_em,c.atualizado_em,
     CASE WHEN c.parent_id IS NULL AND EXISTS (SELECT 1 FROM cronogramas f WHERE f.parent_id=c.id AND f.excluido_em IS NULL)
       THEN COALESCE((SELECT SUM(f.valor_previsto) FROM cronogramas f WHERE f.parent_id=c.id AND f.excluido_em IS NULL),0)
       ELSE c.valor_previsto END::numeric(15,2) AS valor_previsto,
-    COALESCE((SELECT SUM(p.valor) FROM pagamentos p WHERE p.projeto_id=c.projeto_id AND p.excluido_em IS NULL AND p.status=ANY($3::varchar[])
+    COALESCE((SELECT SUM(p.valor) FROM pagamentos_financeiros p WHERE p.projeto_id=c.projeto_id AND p.status=ANY($3::varchar[])
       AND (p.etapa_id=c.id OR (c.parent_id IS NULL AND p.etapa_id IN (SELECT f.id FROM cronogramas f WHERE f.parent_id=c.id AND f.excluido_em IS NULL)))),0)::numeric(15,2) AS valor_pago
     FROM cronogramas c WHERE c.projeto_id=$1 AND ${activeScheduleStageWhere('c')}
       AND ($2='%%' OR c.nome ILIKE $2 OR c.descricao ILIKE $2 OR EXISTS (
@@ -173,7 +174,10 @@ stagesRouter.delete('/:itemId', requireProjectPermission('etapas.excluir'), asyn
   const projectId = req.acessoProjeto!.projetoId
   const { rows: links } = await query<{ pagamentos: number }>(`WITH itens AS (
     SELECT id FROM cronogramas WHERE projeto_id=$1 AND excluido_em IS NULL AND (id=$2 OR parent_id=$2)
-  ) SELECT (SELECT COUNT(*)::int FROM pagamentos WHERE projeto_id=$1 AND excluido_em IS NULL AND etapa_id IN (SELECT id FROM itens)) AS pagamentos`, [projectId,id])
+  ) SELECT (
+    (SELECT COUNT(*) FROM despesas WHERE projeto_id=$1 AND excluido_em IS NULL AND etapa_id IN (SELECT id FROM itens)) +
+    (SELECT COUNT(*) FROM pagamentos WHERE projeto_id=$1 AND compra_id IS NULL AND excluido_em IS NULL AND etapa_id IN (SELECT id FROM itens))
+  )::int AS pagamentos`, [projectId,id])
   const linked = links[0]
   if (linked?.pagamentos) {
     throw new AppError(422, `Não é possível excluir esta etapa porque há ${linked.pagamentos} pagamento(s) vinculado(s).`, 'ETAPA_COM_MOVIMENTACOES')

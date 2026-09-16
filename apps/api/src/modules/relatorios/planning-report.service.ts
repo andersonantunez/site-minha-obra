@@ -4,6 +4,7 @@ import { query } from '../../config/database.js'
 import { AppError } from '../../shared/errors.js'
 import { cashFlowCte, cashFlowFilter } from '../orcamento/cash-flow.query.js'
 import { SETTLED_PAYMENT_STATUSES } from '../pagamentos/payment-status.js'
+import { paymentFinancialCte } from '../pagamentos/purchase-financial.query.js'
 
 type Project = { nome: string; cidade: string | null; estado: string | null }
 type CashFlowRow = { data: string; descricao: string; detalhes: string | null; quantidade: string | null; unidade: string | null; valor: string; provisionado: boolean; origem: string }
@@ -40,12 +41,12 @@ export async function getCashFlowReport(projectId: number, filters: CashFlowFilt
 export async function getScheduleReport(projectId: number) {
   const [project,stages] = await Promise.all([
     getProject(projectId),
-    query<ScheduleRow>(`SELECT c.ordem,
+    query<ScheduleRow>(`WITH ${paymentFinancialCte} SELECT c.ordem,
       CASE WHEN pai.id IS NULL THEN 'ETAPA '||c.ordem||' - '||c.nome ELSE 'ETAPA '||pai.ordem||' - '||pai.nome||' / '||c.nome END AS etapa,
       CASE WHEN pai.id IS NULL THEN 'Etapa' ELSE 'Subitem' END AS tipo,
       c.data_inicio_previsto,c.data_fim_previsto,c.data_inicio,c.data_fim,
       c.valor_previsto::numeric(15,2),
-      COALESCE((SELECT SUM(p.valor) FROM pagamentos p WHERE p.projeto_id=c.projeto_id AND p.excluido_em IS NULL AND p.status=ANY($2::varchar[])
+      COALESCE((SELECT SUM(p.valor) FROM pagamentos_financeiros p WHERE p.projeto_id=c.projeto_id AND p.status=ANY($2::varchar[])
         AND (p.etapa_id=c.id OR (c.parent_id IS NULL AND p.etapa_id IN (SELECT f.id FROM cronogramas f WHERE f.parent_id=c.id AND f.excluido_em IS NULL)))),0)::numeric(15,2) AS valor_pago
       FROM cronogramas c LEFT JOIN cronogramas pai ON pai.id=c.parent_id
       WHERE c.projeto_id=$1 AND c.excluido_em IS NULL

@@ -52,7 +52,7 @@ assetsRouter.put('/categorias/:categoriaId', requireProjectPermission('categoria
   const current = await query<{ nome: string }>('SELECT nome FROM categorias_documento WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL', [Number(req.params.categoriaId), req.acessoProjeto!.projetoId])
   if (!current.rows[0]) throw new AppError(404, 'Categoria não encontrada.', 'CATEGORIA_DOCUMENTO_NAO_ENCONTRADA')
   const currentCategory = current.rows[0]
-  if (currentCategory.nome.toLocaleLowerCase('pt-BR') === 'pagamentos' && input.nome.toLocaleLowerCase('pt-BR') !== 'pagamentos') throw new AppError(409, 'A categoria Pagamentos é usada automaticamente nos anexos de pagamentos.', 'CATEGORIA_PAGAMENTO_FIXA')
+  if (currentCategory.nome.toLocaleLowerCase('pt-BR') === 'despesas' && input.nome.toLocaleLowerCase('pt-BR') !== 'despesas') throw new AppError(409, 'A categoria Despesas é usada automaticamente nos anexos de despesas.', 'CATEGORIA_DESPESA_FIXA')
   try {
     const category = await withTransaction(async (client) => {
       const { rows } = await client.query<{ id: number; nome: string; criado_em: string }>('UPDATE categorias_documento SET nome=$3 WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL RETURNING id,nome,criado_em', [Number(req.params.categoriaId), req.acessoProjeto!.projetoId, input.nome])
@@ -69,7 +69,7 @@ assetsRouter.put('/categorias/:categoriaId', requireProjectPermission('categoria
 assetsRouter.delete('/categorias/:categoriaId', requireProjectPermission('categorias.excluir'), async (req, res) => {
   const category = await query<{ nome: string }>('SELECT nome FROM categorias_documento WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL', [Number(req.params.categoriaId), req.acessoProjeto!.projetoId])
   if (!category.rows[0]) throw new AppError(404, 'Categoria não encontrada.', 'CATEGORIA_DOCUMENTO_NAO_ENCONTRADA')
-  if (category.rows[0].nome.toLocaleLowerCase('pt-BR') === 'pagamentos') throw new AppError(409, 'A categoria Pagamentos é usada automaticamente nos anexos de pagamentos.', 'CATEGORIA_PAGAMENTO_FIXA')
+  if (category.rows[0].nome.toLocaleLowerCase('pt-BR') === 'despesas') throw new AppError(409, 'A categoria Despesas é usada automaticamente nos anexos de despesas.', 'CATEGORIA_DESPESA_FIXA')
   const used = await query(`SELECT 1 FROM documentos_projeto_categorias dc
     JOIN documentos_projeto d ON d.id=dc.documento_id
     WHERE dc.categoria_id=$1 AND d.projeto_id=$2 AND d.excluido_em IS NULL LIMIT 1`, [Number(req.params.categoriaId), req.acessoProjeto!.projetoId])
@@ -81,11 +81,12 @@ assetsRouter.delete('/categorias/:categoriaId', requireProjectPermission('catego
 assetsRouter.get('/documentos', requireProjectPermission('documentos.visualizar'), async (req, res) => {
   const search = String(req.query.busca || '').trim()
   const categoryId = Number(req.query.categoriaId) || null
-  const { rows } = await query(`SELECT d.id,d.titulo,d.descricao,d.tipo_origem,d.url,d.caminho_arquivo,d.nome_original,d.tipo_mime,d.pagamento_id,d.criado_em,p.descricao AS pagamento_descricao,
+  const { rows } = await query(`SELECT d.id,d.titulo,d.descricao,d.tipo_origem,d.url,d.caminho_arquivo,d.nome_original,d.tipo_mime,d.pagamento_id,d.compra_id,d.criado_em,
+      COALESCE(c.descricao,p.descricao) AS pagamento_descricao,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('id',c.id,'nome',c.nome) ORDER BY c.nome)
         FROM documentos_projeto_categorias dc JOIN categorias_documento c ON c.id=dc.categoria_id
         WHERE dc.documento_id=d.id AND c.excluido_em IS NULL),'[]'::jsonb) AS categorias
-    FROM documentos_projeto d LEFT JOIN pagamentos p ON p.id=d.pagamento_id
+    FROM documentos_projeto d LEFT JOIN pagamentos p ON p.id=d.pagamento_id LEFT JOIN despesas c ON c.id=d.compra_id
     WHERE d.projeto_id=$1 AND d.excluido_em IS NULL AND ($2::bigint IS NULL OR EXISTS (
       SELECT 1 FROM documentos_projeto_categorias dc WHERE dc.documento_id=d.id AND dc.categoria_id=$2))
       AND ($3='%%' OR d.titulo ILIKE $3 OR COALESCE(d.descricao,'') ILIKE $3 OR COALESCE(d.nome_original,'') ILIKE $3)

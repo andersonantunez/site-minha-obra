@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { Navigate, useOutletContext } from 'react-router-dom'
 
 export type ProjectAccessInfo = {
-  projeto: { id: number; nome: string; papel?: string; cep?: string | null; logradouro?: string | null; numero?: string | null; complemento?: string | null; bairro?: string | null; cidade?: string | null; estado?: string | null }
+  projeto: { id: number; nome: string; papel?: string; cep?: string | null; logradouro?: string | null; numero?: string | null; complemento?: string | null; bairro?: string | null; cidade?: string | null; estado?: string | null; latitude?: string | number | null; longitude?: string | number | null }
   permissoes: string[]
   proprietario: boolean
   administradorSistema: boolean
@@ -30,7 +30,7 @@ export function ProjectPermissionRoute({ permission, children }: { permission: s
   if (hasProjectPermission(access, permission)) return children
   const destinations = [
     ['visao_geral.visualizar', ''], ['etapas.visualizar', 'cronograma'], ['tarefas.visualizar', 'tarefas'],
-    ['orcamento.visualizar', 'fluxo-caixa'], ['pagamentos.visualizar', 'pagamentos'],
+    ['orcamento.visualizar', 'fluxo-caixa'], ['pagamentos.visualizar', 'despesas'],
     ['categorias.visualizar', 'categorias-documentos'], ['documentos.visualizar', 'documentos'],
     ['membros.visualizar', 'participantes'], ['permissoes.visualizar', 'permissoes'], ['configuracoes.visualizar', 'dados-obra'],
   ] as const

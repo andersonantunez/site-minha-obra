@@ -8,6 +8,7 @@ import { assetsRouter } from './modules/arquivos/assets.routes.js'
 import { authRouter } from './modules/auth/auth.routes.js'
 import { budgetRouter } from './modules/orcamento/budget.routes.js'
 import { dashboardRouter } from './modules/dashboard/dashboard.routes.js'
+import { expensesRouter } from './modules/despesas/expense.routes.js'
 import { stagesRouter } from './modules/etapas/stage.routes.js'
 import { invitationsRouter, membersRouter } from './modules/membros/member.routes.js'
 import { paymentsRouter } from './modules/pagamentos/payment.routes.js'
@@ -38,6 +39,7 @@ export function createApp() {
   app.use('/api/projetos/:projetoId/orcamento', budgetRouter)
   app.use('/api/projetos/:projetoId/fluxo-caixa', budgetRouter)
   app.use('/api/projetos/:projetoId/pagamentos', paymentsRouter)
+  app.use('/api/projetos/:projetoId/despesas', expensesRouter)
   app.use('/api/projetos/:projetoId/permissoes', permissionsRouter)
   app.use('/api/projetos/:projetoId/tarefas', tasksRouter)
   app.use('/api/projetos/:projetoId/acervo', assetsRouter)

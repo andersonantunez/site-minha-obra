@@ -39,17 +39,25 @@ const cashFlowSchema = z.object({
 })
 
 const paymentSchema = z.object({
-  old_id: id, stage_old_id: id.nullable(), descricao: z.string().min(1).max(240), fornecedor: nullableText,
+  old_id: id, purchase_old_id: id.nullable().default(null), stage_old_id: id.nullable(), descricao: z.string().min(1).max(240), fornecedor: nullableText,
   contato_fornecedor: nullableText, nome_contato_fornecedor: nullableText, observacao: nullableText,
   ordem: z.number().int(), quantidade: nullableTextOrNumber, unidade: nullableText, chave_pix: nullableText,
-  valor: nullableTextOrNumber, status: z.enum(['PENDENTE', 'EM_NEGOCIACAO', 'PAGO_AGUARDANDO_ENTREGA', 'CONCLUIDO']),
+  valor: nullableTextOrNumber, valor_unitario: nullableTextOrNumber.default(null), valor_desconto: nullableTextOrNumber.default(null), valor_total_manual: z.boolean().default(false), documentos_legados_habilitados: z.boolean().default(true), status: z.enum(['PENDENTE', 'EM_NEGOCIACAO', 'PAGO_AGUARDANDO_ENTREGA', 'CONCLUIDO']),
   forma_pagamento: nullableText, data_pagamento: nullableDate, data_agendamento: nullableDate, data_entrega: nullableDate,
+})
+
+const purchaseSchema = z.object({
+  old_id: id, stage_old_id: id.nullable(), descricao: z.string().min(1).max(240),
+  status: z.enum(['PENDENTE', 'EM_NEGOCIACAO', 'PAGO_AGUARDANDO_ENTREGA', 'CONCLUIDO']),
+  data_pagamento: nullableDate, forma_pagamento: nullableText, fornecedor: nullableText,
+  nome_contato_fornecedor: nullableText, contato_fornecedor: nullableText, observacao: nullableText, valor_desconto: nullableTextOrNumber.default(null), numero_nota_fiscal: nullableText,
+  data_emissao: nullableDate, data_agendamento: nullableDate, data_entrega: nullableDate, ordem: z.number().int(),
 })
 
 const categorySchema = z.object({ old_id: id, nome: z.string().min(2).max(80) })
 const attachmentSchema = z.object({ nome_original: z.string().max(255), tipo_mime: z.string().max(100), base64: z.string().min(1) })
 const documentSchema = z.object({
-  old_id: id, payment_old_id: id.nullable(), titulo: z.string().min(1).max(180), categoria: z.string().max(60),
+  old_id: id, payment_old_id: id.nullable(), purchase_old_id: id.nullable().default(null), titulo: z.string().min(1).max(180), categoria: z.string().max(60),
   descricao: nullableText, tipo_origem: z.enum(['ARQUIVO', 'LINK']), url: nullableText, nome_original: nullableText,
   tipo_mime: nullableText, category_old_ids: z.array(id), arquivo: attachmentSchema.nullable(),
 })
@@ -64,7 +72,7 @@ export const projectBackupSchema = z.object({
     warnings: z.array(z.string()), project: projectSchema,
     modules: z.object({
       cronograma: z.array(scheduleSchema), tarefas: z.array(taskSchema), fluxo_caixa: z.array(cashFlowSchema),
-      pagamentos: z.array(paymentSchema), links_cotacao: z.array(quoteLinkSchema), categorias: z.array(categorySchema),
+      compras: z.array(purchaseSchema).default([]), pagamentos: z.array(paymentSchema), links_cotacao: z.array(quoteLinkSchema), categorias: z.array(categorySchema),
       documentos: z.array(documentSchema), participantes: z.array(participantSchema),
       permissoes_membros: z.array(memberPermissionSchema), permissoes_papeis: z.array(rolePermissionSchema),
     }),
@@ -78,22 +86,29 @@ export const projectBackupSchema = z.object({
   ensureUnique(modules.tarefas.map((item) => item.old_id), ['backup','modules','tarefas'])
   ensureUnique(modules.fluxo_caixa.map((item) => item.old_id), ['backup','modules','fluxo_caixa'])
   ensureUnique(modules.pagamentos.map((item) => item.old_id), ['backup','modules','pagamentos'])
+  ensureUnique(modules.compras.map((item) => item.old_id), ['backup','modules','compras'])
   ensureUnique(modules.categorias.map((item) => item.old_id), ['backup','modules','categorias'])
   ensureUnique(modules.documentos.map((item) => item.old_id), ['backup','modules','documentos'])
   const stages = new Set(modules.cronograma.map((item) => item.old_id))
   const payments = new Set(modules.pagamentos.map((item) => item.old_id))
+  const purchases = new Set(modules.compras.map((item) => item.old_id))
   const categories = new Set(modules.categorias.map((item) => item.old_id))
   modules.cronograma.forEach((item, index) => {
     if (item.parent_old_id && !stages.has(item.parent_old_id)) context.addIssue({ code:'custom', path:['backup','modules','cronograma',index,'parent_old_id'], message:'A etapa pai não existe no backup.' })
   })
   modules.pagamentos.forEach((item, index) => {
     if (item.stage_old_id && !stages.has(item.stage_old_id)) context.addIssue({ code:'custom', path:['backup','modules','pagamentos',index,'stage_old_id'], message:'A etapa do pagamento não existe no backup.' })
+    if (item.purchase_old_id && !purchases.has(item.purchase_old_id)) context.addIssue({ code:'custom', path:['backup','modules','pagamentos',index,'purchase_old_id'], message:'A Compra do item não existe no backup.' })
+  })
+  modules.compras.forEach((item, index) => {
+    if (item.stage_old_id && !stages.has(item.stage_old_id)) context.addIssue({ code:'custom', path:['backup','modules','compras',index,'stage_old_id'], message:'A etapa da Compra não existe no backup.' })
   })
   modules.links_cotacao.forEach((item, index) => {
     if (!payments.has(item.payment_old_id)) context.addIssue({ code:'custom', path:['backup','modules','links_cotacao',index], message:'O pagamento do link não existe no backup.' })
   })
   modules.documentos.forEach((item, index) => {
     if (item.payment_old_id && !payments.has(item.payment_old_id)) context.addIssue({ code:'custom', path:['backup','modules','documentos',index,'payment_old_id'], message:'O pagamento do documento não existe no backup.' })
+    if (item.purchase_old_id && !purchases.has(item.purchase_old_id)) context.addIssue({ code:'custom', path:['backup','modules','documentos',index,'purchase_old_id'], message:'A Compra do documento não existe no backup.' })
     if (item.category_old_ids.some((categoryId) => !categories.has(categoryId))) context.addIssue({ code:'custom', path:['backup','modules','documentos',index,'category_old_ids'], message:'Uma categoria do documento não existe no backup.' })
     if (item.tipo_origem === 'LINK' && !item.url) context.addIssue({ code:'custom', path:['backup','modules','documentos',index,'url'], message:'O endereço do documento não está disponível.' })
   })

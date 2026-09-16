@@ -43,7 +43,7 @@ projectsRouter.post('/:projetoId/backup/importar', requireProjectPermission('con
 })
 
 projectsRouter.get('/:projetoId', requireProjectPermission('projeto.visualizar'), async (req, res) => {
-  const { rows } = await query(`SELECT p.id,p.nome,p.cep,p.logradouro,p.numero,p.complemento,p.bairro,p.cidade,p.estado,$2::varchar AS papel
+  const { rows } = await query(`SELECT p.id,p.nome,p.cep,p.logradouro,p.numero,p.complemento,p.bairro,p.cidade,p.estado,p.latitude,p.longitude,$2::varchar AS papel
     FROM projetos p WHERE p.id=$1 AND p.excluido_em IS NULL`, [req.acessoProjeto!.projetoId, req.acessoProjeto!.papel])
   res.json({ projeto: rows[0], permissoes: [...req.acessoProjeto!.permissoes], proprietario: req.acessoProjeto!.proprietario, administradorSistema: req.acessoProjeto!.administradorSistema })
 })

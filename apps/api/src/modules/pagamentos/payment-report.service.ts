@@ -8,6 +8,9 @@ import { PAYMENT_STATUS_LABELS, type PaymentStatus } from './payment-status.js'
 type ReportLink = { id: number; url: string; titulo?: string; tipo_origem?: 'ARQUIVO' | 'LINK'; nome_original?: string | null }
 type ReportPayment = {
   id: number
+  purchase_id: number | null
+  record_type: 'COMPRA_ITEM' | 'ITEM_ORFAO'
+  compra: string | null
   etapa: string | null
   subitem: string | null
   quantidade: string | null
@@ -45,12 +48,29 @@ const excelDate = (value: string | Date | null) => {
   return new Date(`${iso}T12:00:00Z`)
 }
 const statusLabel = (status: PaymentStatus) => PAYMENT_STATUS_LABELS[status]
-const paymentDocumentUrl = (projectId: number, paymentId: number, document: ReportLink) => document.url || `${env.webUrl}/api/projetos/${projectId}/pagamentos/${paymentId}/documentos/${document.id}/arquivo`
+const paymentDocumentUrl = (projectId: number, payment: ReportPayment, document: ReportLink) => document.url || (payment.purchase_id
+  ? `${env.webUrl}/api/projetos/${projectId}/despesas/despesas/${payment.purchase_id}/documentos/${document.id}/arquivo`
+  : `${env.webUrl}/api/projetos/${projectId}/despesas/${payment.id}/documentos/${document.id}/arquivo`)
 
 export async function getPaymentReport(projectId: number): Promise<PaymentReport> {
   const [project, payments] = await Promise.all([
     query<{ nome: string; cidade: string | null; estado: string | null }>('SELECT nome,cidade,estado FROM projetos WHERE id=$1 AND excluido_em IS NULL', [projectId]),
-    query<ReportPayment>(`SELECT p.id,
+    query<ReportPayment>(`WITH registros AS (
+      SELECT i.id,c.id AS purchase_id,'COMPRA_ITEM'::text AS record_type,c.descricao AS compra,
+        c.etapa_id,i.quantidade,i.unidade,i.descricao,i.observacao,
+        c.fornecedor,c.contato_fornecedor,c.nome_contato_fornecedor,NULL::varchar AS chave_pix,
+        CASE WHEN i.valor_total_manual THEN i.valor WHEN i.valor_unitario IS NULL THEN i.valor ELSE ROUND((COALESCE(i.quantidade,1)*i.valor_unitario)-COALESCE(i.valor_desconto,0),2) END AS valor,
+        c.status,c.forma_pagamento,c.data_pagamento,c.data_agendamento,c.data_entrega,i.criado_em
+      FROM despesas c JOIN pagamentos i ON i.compra_id=c.id AND i.excluido_em IS NULL
+      WHERE c.projeto_id=$1 AND c.excluido_em IS NULL
+      UNION ALL
+      SELECT p.id,NULL::bigint AS purchase_id,'ITEM_ORFAO'::text AS record_type,NULL::varchar AS compra,
+        p.etapa_id,p.quantidade,p.unidade,p.descricao,p.observacao,p.fornecedor,p.contato_fornecedor,
+        p.nome_contato_fornecedor,p.chave_pix,
+        CASE WHEN p.valor_total_manual THEN p.valor WHEN p.valor_unitario IS NULL THEN p.valor ELSE ROUND((COALESCE(p.quantidade,1)*p.valor_unitario)-COALESCE(p.valor_desconto,0),2) END AS valor,
+        p.status,p.forma_pagamento,p.data_pagamento,p.data_agendamento,p.data_entrega,p.criado_em
+      FROM pagamentos p WHERE p.projeto_id=$1 AND p.compra_id IS NULL AND p.excluido_em IS NULL
+    ) SELECT p.id,p.purchase_id,p.record_type,p.compra,
       CASE WHEN COALESCE(pai.id,e.id) IS NULL THEN NULL ELSE 'ETAPA '||COALESCE(pai.ordem,e.ordem)||' - '||COALESCE(pai.nome,e.nome) END AS etapa,
       CASE WHEN e.parent_id IS NOT NULL THEN e.nome ELSE NULL END AS subitem,
       p.quantidade,p.unidade,p.descricao,p.fornecedor,p.contato_fornecedor,p.nome_contato_fornecedor,p.chave_pix,
@@ -58,12 +78,12 @@ export async function getPaymentReport(projectId: number): Promise<PaymentReport
       COALESCE((SELECT JSONB_AGG(JSONB_BUILD_OBJECT('id',lc.id,'url',lc.url) ORDER BY lc.id)
         FROM links_cotacao_pagamento lc WHERE lc.pagamento_id=p.id),'[]'::jsonb) AS links_cotacao,
       COALESCE((SELECT JSONB_AGG(JSONB_BUILD_OBJECT('id',d.id,'url',d.url,'titulo',d.titulo,'tipo_origem',d.tipo_origem,'nome_original',d.nome_original) ORDER BY d.criado_em,d.id)
-        FROM documentos_projeto d WHERE d.pagamento_id=p.id AND d.excluido_em IS NULL),'[]'::jsonb) AS documentos
-      FROM pagamentos p
+        FROM documentos_projeto d WHERE d.excluido_em IS NULL AND
+          ((p.purchase_id IS NOT NULL AND d.compra_id=p.purchase_id) OR (p.purchase_id IS NULL AND d.pagamento_id=p.id))),'[]'::jsonb) AS documentos
+      FROM registros p
       LEFT JOIN cronogramas e ON e.id=p.etapa_id
       LEFT JOIN cronogramas pai ON pai.id=e.parent_id
-      WHERE p.projeto_id=$1 AND p.excluido_em IS NULL
-      ORDER BY p.data_pagamento DESC NULLS FIRST,p.id DESC`, [projectId]),
+      ORDER BY p.data_pagamento DESC NULLS FIRST,p.criado_em DESC,p.id DESC`, [projectId]),
   ])
   if (!project.rows[0]) throw new AppError(404, 'Projeto não encontrado.', 'PROJETO_NAO_ENCONTRADO')
   return { projeto: project.rows[0], pagamentos: payments.rows }
@@ -72,7 +92,7 @@ export async function getPaymentReport(projectId: number): Promise<PaymentReport
 export function createPaymentPdf(projectId: number, report: PaymentReport) {
   const document = new PDFDocument({
     size: 'A4', layout: 'landscape', margins: { top: 40, right: 42, bottom: 44, left: 42 }, bufferPages: true,
-    info: { Title: `Pagamentos - ${report.projeto.nome}` },
+    info: { Title: `Despesas - ${report.projeto.nome}` },
   })
   const pageBottom = 535
   const contentWidth = 756
@@ -154,7 +174,7 @@ export function createPaymentPdf(projectId: number, report: PaymentReport) {
         document.y = cursorY
         ensureSpace(18)
         cursorY = document.y
-        const url = paymentDocumentUrl(projectId, payment.id, item)
+        const url = paymentDocumentUrl(projectId, payment, item)
         document.fillColor('#526d82').font('Helvetica').fontSize(7).text(`${item.titulo || item.nome_original || 'Documento'}: ${url}`, 54, cursorY, { width: 728, link: url, underline: true, ellipsis: true, height: 12 })
         cursorY += 15
       }
@@ -163,7 +183,7 @@ export function createPaymentPdf(projectId: number, report: PaymentReport) {
     document.moveTo(42, document.y).lineTo(798, document.y).strokeColor('#deddd7').stroke()
     document.y += 10
   }
-  if (!report.pagamentos.length) document.fillColor('#747a76').font('Helvetica').fontSize(10).text('Nenhum pagamento cadastrado.', 42, 160)
+  if (!report.pagamentos.length) document.fillColor('#747a76').font('Helvetica').fontSize(10).text('Nenhuma despesa cadastrada.', 42, 160)
   const range = document.bufferedPageRange()
   for (let index = 0; index < range.count; index += 1) {
     document.switchToPage(index)
@@ -176,7 +196,7 @@ export async function createPaymentWorkbook(projectId: number, report: PaymentRe
   const workbook = new ExcelJS.Workbook()
   workbook.creator = 'MinhaObra'
   workbook.created = new Date()
-  const payments = workbook.addWorksheet('Pagamentos', { views: [{ state: 'frozen', ySplit: 1 }] })
+  const payments = workbook.addWorksheet('Despesas', { views: [{ state: 'frozen', ySplit: 1 }] })
   payments.columns = [
     { header: 'ID', key: 'id', width: 9 }, { header: 'Etapa', key: 'etapa', width: 38 }, { header: 'Subitem', key: 'subitem', width: 28 },
     { header: 'Data pagamento', key: 'data_pagamento', width: 17 }, { header: 'Quantidade', key: 'quantidade', width: 13 }, { header: 'Unidade', key: 'unidade', width: 14 },
@@ -193,7 +213,7 @@ export async function createPaymentWorkbook(projectId: number, report: PaymentRe
       observacao: payment.observacao || null, fornecedor: payment.fornecedor || null, contato: payment.contato_fornecedor || null, funcionario: payment.nome_contato_fornecedor || null,
       pix: payment.chave_pix || null, valor: payment.valor === null ? null : Number(payment.valor), status: statusLabel(payment.status), agendamento: excelDate(payment.data_agendamento),
       entrega: excelDate(payment.data_entrega), forma: payment.forma_pagamento || null, cotacoes: payment.links_cotacao.map((link) => link.url).join('\n') || null,
-      documentos: payment.documentos.map((item) => paymentDocumentUrl(projectId, payment.id, item)).join('\n') || null,
+      documentos: payment.documentos.map((item) => paymentDocumentUrl(projectId, payment, item)).join('\n') || null,
     })
   }
   payments.getRow(1).eachCell((cell) => { cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }; cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF303732' } }; cell.alignment = { vertical: 'middle' } })
@@ -213,7 +233,7 @@ export async function createPaymentWorkbook(projectId: number, report: PaymentRe
       row.getCell('link').value = { text: link.url, hyperlink: link.url }
     }
     for (const item of payment.documentos) {
-      const url = paymentDocumentUrl(projectId, payment.id, item)
+      const url = paymentDocumentUrl(projectId, payment, item)
       const row = resources.addRow({ id: payment.id, descricao: payment.descricao, tipo: 'Documento', titulo: item.titulo || item.nome_original || 'Documento' })
       row.getCell('link').value = { text: url, hyperlink: url }
     }

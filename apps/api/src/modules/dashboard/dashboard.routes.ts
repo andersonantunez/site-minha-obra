@@ -6,6 +6,7 @@ import { AppError } from '../../shared/errors.js'
 import { requireProjectPermission } from '../../shared/projectAccess.js'
 import { readStoredFile } from '../../shared/storage.js'
 import { PAYMENT_STATUS, SETTLED_PAYMENT_STATUSES } from '../pagamentos/payment-status.js'
+import { paymentFinancialCte } from '../pagamentos/purchase-financial.query.js'
 
 export const dashboardRouter = Router({ mergeParams: true })
 dashboardRouter.use(requireAuth)
@@ -22,35 +23,35 @@ dashboardRouter.get('/', requireProjectPermission('visao_geral.visualizar'), asy
         AND lower(c.nome)=lower('Imagem de Apresentação') AND c.excluido_em IS NULL AND d.excluido_em IS NULL
         ORDER BY d.criado_em DESC,d.id DESC LIMIT 1) presentation ON TRUE
       WHERE p.id=$1 AND p.excluido_em IS NULL`, [projectId]),
-    query(`SELECT
+    query(`WITH ${paymentFinancialCte} SELECT
       COALESCE((SELECT SUM(valor) FROM itens_orcamento WHERE projeto_id=$1 AND excluido_em IS NULL AND valor>0 AND competencia<=CURRENT_DATE),0)::numeric(15,2) AS orcamento_atual,
       COALESCE((SELECT SUM(valor) FROM itens_orcamento WHERE projeto_id=$1 AND excluido_em IS NULL AND valor>0),0)::numeric(15,2) AS orcamento_com_provisao,
       COALESCE((SELECT SUM(valor) FROM itens_orcamento WHERE projeto_id=$1 AND excluido_em IS NULL AND valor>0 AND competencia>CURRENT_DATE),0)::numeric(15,2) AS total_provisionado,
       COALESCE((SELECT SUM(valor) FROM itens_orcamento WHERE projeto_id=$1 AND excluido_em IS NULL AND valor>0),0)::numeric(15,2) AS orcamento_total,
-      COALESCE((SELECT SUM(valor) FROM pagamentos WHERE projeto_id=$1 AND excluido_em IS NULL),0)::numeric(15,2) AS comprometido,
-      COALESCE((SELECT SUM(valor) FROM pagamentos WHERE projeto_id=$1 AND excluido_em IS NULL AND status=ANY($2::varchar[])),0)::numeric(15,2) AS pago,
-      COALESCE((SELECT SUM(valor) FROM pagamentos WHERE projeto_id=$1 AND excluido_em IS NULL AND status=ANY($2::varchar[])),0)::numeric(15,2) AS total_pagamentos,
-      COALESCE((SELECT SUM(valor) FROM pagamentos WHERE projeto_id=$1 AND excluido_em IS NULL AND status=$3),0)::numeric(15,2) AS pago_aguardando_entrega,
-      COALESCE((SELECT SUM(valor) FROM pagamentos WHERE projeto_id=$1 AND excluido_em IS NULL AND status=$4),0)::numeric(15,2) AS concluido,
-      COALESCE((SELECT SUM(valor) FROM pagamentos WHERE projeto_id=$1 AND excluido_em IS NULL AND status=$5),0)::numeric(15,2) AS em_negociacao,
-      COALESCE((SELECT SUM(valor) FROM pagamentos WHERE projeto_id=$1 AND excluido_em IS NULL AND status=$6),0)::numeric(15,2) AS pendente,
+      COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1),0)::numeric(15,2) AS comprometido,
+      COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1 AND status=ANY($2::varchar[])),0)::numeric(15,2) AS pago,
+      COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1 AND status=ANY($2::varchar[])),0)::numeric(15,2) AS total_pagamentos,
+      COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1 AND status=$3),0)::numeric(15,2) AS pago_aguardando_entrega,
+      COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1 AND status=$4),0)::numeric(15,2) AS concluido,
+      COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1 AND status=$5),0)::numeric(15,2) AS em_negociacao,
+      COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1 AND status=$6),0)::numeric(15,2) AS pendente,
       (SELECT COUNT(*)::int FROM cronogramas WHERE projeto_id=$1 AND parent_id IS NULL AND excluido_em IS NULL AND data_fim IS NOT NULL AND data_fim<=CURRENT_DATE) AS etapas_concluidas,
       (SELECT COUNT(*)::int FROM cronogramas WHERE projeto_id=$1 AND parent_id IS NULL AND excluido_em IS NULL AND data_inicio<=CURRENT_DATE AND (data_fim IS NULL OR data_fim>CURRENT_DATE)) AS etapas_em_andamento,
       COALESCE((SELECT ROUND(AVG(CASE WHEN data_fim IS NOT NULL AND data_fim<=CURRENT_DATE THEN 100 WHEN data_inicio<=CURRENT_DATE THEN 50 ELSE 0 END)) FROM cronogramas WHERE projeto_id=$1 AND parent_id IS NULL AND excluido_em IS NULL),0) AS percentual_andamento`, [projectId,SETTLED_PAYMENT_STATUSES,PAYMENT_STATUS.PAGO_AGUARDANDO_ENTREGA,PAYMENT_STATUS.CONCLUIDO,PAYMENT_STATUS.EM_NEGOCIACAO,PAYMENT_STATUS.PENDENTE]),
-    query(`WITH meses AS (
+    query(`WITH ${paymentFinancialCte}, meses AS (
       SELECT competencia AS mes,SUM(valor) AS previsto FROM itens_orcamento WHERE projeto_id=$1 AND excluido_em IS NULL GROUP BY competencia
     ), pagos AS (
-      SELECT DATE_TRUNC('month',data_pagamento)::date AS mes,SUM(valor) AS realizado FROM pagamentos
-      WHERE projeto_id=$1 AND excluido_em IS NULL AND status=ANY($2::varchar[]) AND data_pagamento IS NOT NULL GROUP BY 1
+      SELECT DATE_TRUNC('month',data_pagamento)::date AS mes,SUM(valor) AS realizado FROM pagamentos_financeiros
+      WHERE projeto_id=$1 AND status=ANY($2::varchar[]) AND data_pagamento IS NOT NULL GROUP BY 1
     ) SELECT COALESCE(m.mes,pg.mes) AS mes,COALESCE(m.previsto,0)::numeric(15,2) AS previsto,
       COALESCE(pg.realizado,0)::numeric(15,2) AS realizado FROM meses m FULL JOIN pagos pg ON pg.mes=m.mes ORDER BY mes`, [projectId,SETTLED_PAYMENT_STATUSES]),
-    query(`SELECT COALESCE('ETAPA ' || COALESCE(pai.ordem,e.ordem)::text || ' - ' || COALESCE(pai.nome,e.nome),'Sem etapa') AS etapa,
-      COALESCE(SUM(p.valor),0)::numeric(15,2) AS total FROM pagamentos p
+    query(`WITH ${paymentFinancialCte} SELECT COALESCE('ETAPA ' || COALESCE(pai.ordem,e.ordem)::text || ' - ' || COALESCE(pai.nome,e.nome),'Sem etapa') AS etapa,
+      COALESCE(SUM(p.valor),0)::numeric(15,2) AS total FROM pagamentos_financeiros p
       LEFT JOIN cronogramas e ON e.id=p.etapa_id LEFT JOIN cronogramas pai ON pai.id=e.parent_id
-      WHERE p.projeto_id=$1 AND p.excluido_em IS NULL AND p.status=ANY($2::varchar[])
+      WHERE p.projeto_id=$1 AND p.status=ANY($2::varchar[])
       GROUP BY COALESCE('ETAPA ' || COALESCE(pai.ordem,e.ordem)::text || ' - ' || COALESCE(pai.nome,e.nome),'Sem etapa') ORDER BY total DESC`, [projectId,SETTLED_PAYMENT_STATUSES]),
-    query(`SELECT p.id,p.descricao,p.fornecedor,p.descricao AS item,p.valor,p.forma_pagamento,p.data_pagamento
-      FROM pagamentos p WHERE p.projeto_id=$1 AND p.excluido_em IS NULL AND p.status=ANY($2::varchar[])
+    query(`WITH ${paymentFinancialCte} SELECT p.id,p.descricao,p.fornecedor,p.descricao AS item,p.valor,p.forma_pagamento,p.data_pagamento
+      FROM pagamentos_financeiros p WHERE p.projeto_id=$1 AND p.status=ANY($2::varchar[])
       ORDER BY p.data_pagamento DESC,p.id DESC LIMIT 6`, [projectId,SETTLED_PAYMENT_STATUSES]),
     query(`SELECT id,nome,data_inicio,data_fim,valor_previsto FROM cronogramas WHERE projeto_id=$1 AND parent_id IS NULL AND excluido_em IS NULL
       AND (data_fim IS NULL OR data_fim>CURRENT_DATE) ORDER BY COALESCE(data_inicio,'9999-12-31'),ordem LIMIT 6`, [projectId]),
@@ -82,7 +83,7 @@ dashboardRouter.get('/indicadores', requireProjectPermission('pagamentos.visuali
   const start = `${competence}-01`
   const projectId = req.acessoProjeto!.projetoId
   const [metrics, suppliers, stages, evolution] = await Promise.all([
-    query(`SELECT
+    query(`WITH ${paymentFinancialCte} SELECT
       COALESCE((SELECT SUM(valor) FROM itens_orcamento WHERE projeto_id=$1 AND competencia=$2::date AND excluido_em IS NULL),0)::numeric(15,2) AS orcamento_previsto,
       COALESCE(SUM(p.valor),0)::numeric(15,2) AS comprometido,
       COALESCE(SUM(p.valor) FILTER (WHERE p.status=ANY($3::varchar[])),0)::numeric(15,2) AS pago,
@@ -90,17 +91,17 @@ dashboardRouter.get('/indicadores', requireProjectPermission('pagamentos.visuali
       COALESCE(SUM(p.valor) FILTER (WHERE p.status=$5),0)::numeric(15,2) AS concluido,
       COALESCE(SUM(p.valor) FILTER (WHERE p.status=$6),0)::numeric(15,2) AS em_negociacao,
       COALESCE(SUM(p.valor) FILTER (WHERE p.status=$7),0)::numeric(15,2) AS pendente
-      FROM pagamentos p WHERE p.projeto_id=$1 AND p.excluido_em IS NULL
+      FROM pagamentos_financeiros p WHERE p.projeto_id=$1
       AND DATE_TRUNC('month',COALESCE(p.data_pagamento,p.data_agendamento,p.criado_em))=$2::date`, [projectId,start,SETTLED_PAYMENT_STATUSES,PAYMENT_STATUS.PAGO_AGUARDANDO_ENTREGA,PAYMENT_STATUS.CONCLUIDO,PAYMENT_STATUS.EM_NEGOCIACAO,PAYMENT_STATUS.PENDENTE]),
-    query(`SELECT COALESCE(p.fornecedor,'Não informado') AS fornecedor,SUM(p.valor)::numeric(15,2) AS total
-      FROM pagamentos p WHERE p.projeto_id=$1 AND p.excluido_em IS NULL AND DATE_TRUNC('month',COALESCE(p.data_pagamento,p.data_agendamento,p.criado_em))=$2::date
+    query(`WITH ${paymentFinancialCte} SELECT COALESCE(p.fornecedor,'Não informado') AS fornecedor,SUM(p.valor)::numeric(15,2) AS total
+      FROM pagamentos_financeiros p WHERE p.projeto_id=$1 AND DATE_TRUNC('month',COALESCE(p.data_pagamento,p.data_agendamento,p.criado_em))=$2::date
       GROUP BY p.fornecedor ORDER BY total DESC LIMIT 8`, [projectId,start]),
-    query(`SELECT COALESCE(pai.nome,e.nome,'Sem etapa') AS etapa,SUM(p.valor)::numeric(15,2) AS total
-      FROM pagamentos p LEFT JOIN cronogramas e ON e.id=p.etapa_id LEFT JOIN cronogramas pai ON pai.id=e.parent_id
-      WHERE p.projeto_id=$1 AND p.excluido_em IS NULL AND DATE_TRUNC('month',COALESCE(p.data_pagamento,p.data_agendamento,p.criado_em))=$2::date
+    query(`WITH ${paymentFinancialCte} SELECT COALESCE(pai.nome,e.nome,'Sem etapa') AS etapa,SUM(p.valor)::numeric(15,2) AS total
+      FROM pagamentos_financeiros p LEFT JOIN cronogramas e ON e.id=p.etapa_id LEFT JOIN cronogramas pai ON pai.id=e.parent_id
+      WHERE p.projeto_id=$1 AND DATE_TRUNC('month',COALESCE(p.data_pagamento,p.data_agendamento,p.criado_em))=$2::date
       GROUP BY COALESCE(pai.nome,e.nome,'Sem etapa') ORDER BY total DESC LIMIT 8`, [projectId,start]),
-    query(`SELECT DATE_TRUNC('month',p.data_pagamento)::date AS mes,SUM(p.valor)::numeric(15,2) AS pago
-      FROM pagamentos p WHERE p.projeto_id=$1 AND p.excluido_em IS NULL AND p.status=ANY($2::varchar[]) AND p.data_pagamento IS NOT NULL
+    query(`WITH ${paymentFinancialCte} SELECT DATE_TRUNC('month',p.data_pagamento)::date AS mes,SUM(p.valor)::numeric(15,2) AS pago
+      FROM pagamentos_financeiros p WHERE p.projeto_id=$1 AND p.status=ANY($2::varchar[]) AND p.data_pagamento IS NOT NULL
       GROUP BY 1 ORDER BY 1`, [projectId,SETTLED_PAYMENT_STATUSES]),
   ])
   const values = metrics.rows[0] as Record<string, string>
@@ -115,8 +116,8 @@ dashboardRouter.get('/relatorio.pdf', requireProjectPermission('pagamentos.expor
   if (!/^\d{4}-\d{2}$/.test(competence)) throw new AppError(422, 'Competência inválida.', 'COMPETENCIA_INVALIDA')
   const [project, values] = await Promise.all([
     query<{ nome: string; cidade: string | null; estado: string | null }>('SELECT nome,cidade,estado FROM projetos WHERE id=$1 AND excluido_em IS NULL', [projectId]),
-    query(`SELECT COALESCE(SUM(io.valor),0)::numeric(15,2) AS previsto,
-      COALESCE((SELECT SUM(valor) FROM pagamentos WHERE projeto_id=$1 AND excluido_em IS NULL AND status=ANY($3::varchar[]) AND DATE_TRUNC('month',data_pagamento)=$2::date),0)::numeric(15,2) AS pago
+    query(`WITH ${paymentFinancialCte} SELECT COALESCE(SUM(io.valor),0)::numeric(15,2) AS previsto,
+      COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1 AND status=ANY($3::varchar[]) AND DATE_TRUNC('month',data_pagamento)=$2::date),0)::numeric(15,2) AS pago
       FROM itens_orcamento io WHERE io.projeto_id=$1 AND io.excluido_em IS NULL AND io.competencia=$2::date`, [projectId,`${competence}-01`,SETTLED_PAYMENT_STATUSES]),
   ])
   if (!project.rows[0]) throw new AppError(404, 'Projeto não encontrado.', 'PROJETO_NAO_ENCONTRADO')

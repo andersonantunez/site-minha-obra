@@ -10,6 +10,7 @@ import { useAuth } from '../lib/auth'
 import { hasProjectPermission, roleLabel, type ProjectAccessInfo } from '../lib/projectAccess'
 import { TopbarBackButton } from '../components/TopbarBackButton'
 import { TopbarUser } from '../components/TopbarUser'
+import { SystemAdminLink } from '../components/SystemAdminLink'
 
 const navigation: { group?: string; items: { label: string; icon: typeof LayoutDashboard; path: string; permission: string }[] }[] = [
   { items: [
@@ -22,7 +23,7 @@ const navigation: { group?: string; items: { label: string; icon: typeof LayoutD
   ] },
   { group: 'FINANCEIRO', items: [
     { label: 'Fluxo de Caixa', icon: Landmark, path: 'fluxo-caixa', permission: 'orcamento.visualizar' },
-    { label: 'Pagamentos', icon: ReceiptText, path: 'pagamentos', permission: 'pagamentos.visualizar' },
+    { label: 'Despesas', icon: ReceiptText, path: 'despesas', permission: 'pagamentos.visualizar' },
   ] },
   { group: 'PROJETO', items: [
     { label: 'Categorias', icon: Tags, path: 'categorias-documentos', permission: 'categorias.visualizar' },
@@ -47,15 +48,19 @@ export function AppShell() {
   const addressDetails=[addressStreet,project?.complemento].filter(Boolean).join(' · ')
   const addressLocality=[project?.cidade,project?.estado].filter(Boolean).join(' - ')
   const addressNeighborhood=[project?.bairro,addressLocality].filter(Boolean).join(' · ')
+  const latitude=Number(project?.latitude);const longitude=Number(project?.longitude)
+  const hasCoordinates=Number.isFinite(latitude)&&Number.isFinite(longitude)&&latitude>=-90&&latitude<=90&&longitude>=-180&&longitude<=180
+  const mapsUrl=hasCoordinates?`https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`:''
   const fullAddress=[project?.cep,addressStreet,project?.complemento,project?.bairro,project?.cidade,project?.estado].filter(Boolean).join(', ')
-  const copyAddress=async()=>{if(!fullAddress)return;await navigator.clipboard.writeText(fullAddress);setAddressCopied(true);window.setTimeout(()=>setAddressCopied(false),1800)}
+  const copiedAddress=[fullAddress,mapsUrl].filter(Boolean).join('\n')
+  const copyAddress=async()=>{if(!copiedAddress)return;await navigator.clipboard.writeText(copiedAddress);setAddressCopied(true);window.setTimeout(()=>setAddressCopied(false),1800)}
 
   return <div className="app-layout">
     <aside className={mobileOpen ? 'app-sidebar open' : 'app-sidebar'}>
       <div className="sidebar-brand"><a className="brand" href="/"><span className="brand-mark">M</span><span>MinhaObra</span></a><button onClick={() => setMobileOpen(false)}><X /></button></div>
       <section className="project-current" aria-label="Projeto atual">
         <div className="project-current-header"><span className="project-current-icon"><Building2 /></span><div className="project-current-heading"><small>PROJETO ATUAL</small><strong>{project?.nome || 'Carregando…'}</strong></div></div>
-        {fullAddress&&<div className="project-current-address">{project?.cep&&<span className="project-address-cep"><small>CEP</small><b>{project.cep}</b></span>}{(addressDetails||addressNeighborhood)&&<div className="project-address-details">{addressDetails&&<span className="project-address-street">{addressDetails}</span>}{addressNeighborhood&&<span className="project-address-locality">{addressNeighborhood}</span>}</div>}<button type="button" onClick={()=>void copyAddress()} aria-label="Copiar endereço" title={addressCopied?'Endereço copiado':'Copiar endereço'}>{addressCopied?<Check/>:<Copy/>}</button><small className="project-address-feedback" role="status" aria-live="polite">{addressCopied?'Endereço copiado':''}</small></div>}
+        {(fullAddress||mapsUrl)&&<div className="project-current-address">{project?.cep&&<span className="project-address-cep"><small>CEP</small><b>{project.cep}</b></span>}{(addressDetails||addressNeighborhood||mapsUrl)&&<div className="project-address-details">{addressDetails&&<span className="project-address-street">{addressDetails}</span>}{addressNeighborhood&&<span className="project-address-locality">{addressNeighborhood}</span>}{hasCoordinates&&<a className="project-address-map-link" href={mapsUrl} target="_blank" rel="noopener noreferrer">Ver localização no Google Maps</a>}</div>}<button type="button" onClick={()=>void copyAddress()} aria-label="Copiar endereço" title={addressCopied?'Endereço copiado':'Copiar endereço'}>{addressCopied?<Check/>:<Copy/>}</button><small className="project-address-feedback" role="status" aria-live="polite">{addressCopied?'Endereço copiado':''}</small></div>}
       </section>
       <nav className="app-navigation">
         {navigation.map((section, index) => {
@@ -68,12 +73,13 @@ export function AppShell() {
         })}
       </nav>
     </aside>
+    {user?.administrador_sistema && <SystemAdminLink className="system-admin-corner-link" />}
     {mobileOpen && <button className="sidebar-overlay" aria-label="Fechar menu" onClick={() => setMobileOpen(false)} />}
     <div className="app-main">
       <header className="app-topbar">
         <button className="mobile-nav-button" onClick={() => setMobileOpen(true)}><Menu /></button>
         <div className="topbar-spacer" />
-        <div className="topbar-actions"><TopbarBackButton />{user?.administrador_sistema && <NavLink className="system-admin-topbar-link" to="/admin"><Settings />Admin</NavLink>}<TopbarUser user={user} role={roleLabel(data?.projeto.papel)} onSignOut={() => void signOut().then(() => navigate('/'))} /></div>
+        <div className="topbar-actions"><TopbarBackButton /><TopbarUser user={user} role={roleLabel(data?.projeto.papel)} onSignOut={() => void signOut().then(() => navigate('/'))} /></div>
       </header>
       <main className="app-content"><Outlet context={{ project: data?.projeto, access: data }} /></main>
     </div>

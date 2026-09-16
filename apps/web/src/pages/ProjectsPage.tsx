@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Building2, CalendarDays, MapPin, Settings, X } from 'lucide-react'
+import { Building2, CalendarDays, MapPin, X } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { AddButton, EmptyState, ErrorNotice, PageHeader } from '../components/Ui'
@@ -8,7 +8,7 @@ import { useAuth } from '../lib/auth'
 import { formatDateRange } from '../lib/format'
 import { roleLabel } from '../lib/projectAccess'
 import { TopbarUser } from '../components/TopbarUser'
-import { TopbarBackButton } from '../components/TopbarBackButton'
+import { SystemAdminLink } from '../components/SystemAdminLink'
 
 type ProjectFilter = 'ATIVOS' | 'ARQUIVADOS' | 'TODOS'
 type Project = {
@@ -58,7 +58,7 @@ export function ProjectsPage() {
   const emptyTitle = filter === 'ARQUIVADOS' ? 'Nenhum projeto arquivado encontrado.' : filter === 'TODOS' ? 'Nenhum projeto encontrado.' : 'Sua primeira obra começa aqui'
 
   return <div className="projects-page">
-    <header className="projects-topbar"><a className="brand dark" href="/"><span className="brand-mark">M</span><span>MinhaObra</span></a><div className="topbar-actions"><TopbarBackButton />{user?.administrador_sistema && <Link className="system-admin-topbar-link" to="/admin"><Settings />Admin</Link>}<TopbarUser user={user} role={user?.administrador_sistema ? 'Administrador do Sistema' : user?.nome_plano || 'Usuário'} onSignOut={() => void signOut()} /></div></header>
+    <header className="projects-topbar"><a className="brand dark" href="/"><span className="brand-mark">M</span><span>MinhaObra</span></a><div className="topbar-actions"><TopbarUser user={user} role={user?.administrador_sistema ? 'Administrador do Sistema' : user?.nome_plano || 'Usuário'} onSignOut={() => void signOut()} /></div></header>
     <main className="projects-content">
       <PageHeader eyebrow="PROJETOS" title="Minhas obras" description="Acesse, acompanhe e gerencie suas obras em um único lugar." action={<div className="projects-heading-actions"><label className="projects-status-filter"><span>Exibir</span><select value={filter} onChange={(event) => setFilter(event.target.value as ProjectFilter)}><option value="ATIVOS">Ativos</option><option value="ARQUIVADOS">Arquivados</option><option value="TODOS">Todos</option></select></label><AddButton onClick={() => setCreating(true)}>Nova obra</AddButton></div>} />
       {error && <ErrorNotice message={error.message} />}
@@ -66,6 +66,7 @@ export function ProjectsPage() {
         ? <EmptyState icon={Building2} title={emptyTitle} description={filter === 'ATIVOS' ? 'Cadastre as informações essenciais do projeto. No plano Free, você pode ter uma obra própria e participar de quantas for convidado.' : 'Altere o filtro para visualizar outros projetos ou cadastre uma nova obra.'} action={filter === 'ATIVOS' ? <AddButton onClick={() => setCreating(true)}>Criar primeira obra</AddButton> : undefined} />
         : <>{filter !== 'ARQUIVADOS' && activeProjects.length > 0 && <ProjectCards projects={activeProjects} />}{filter === 'TODOS' && archivedProjects.length > 0 && <div className="archived-projects-divider"><span>Projetos arquivados</span></div>}{filter !== 'ATIVOS' && archivedProjects.length > 0 && <ProjectCards projects={archivedProjects} archived />}</>}
     </main>
+    {user?.administrador_sistema && <SystemAdminLink className="system-admin-corner-link" />}
     {creating && <div className="dialog-backdrop" role="presentation"><section className="dialog large" role="dialog" aria-modal="true" aria-labelledby="new-project-title"><header><div><small>NOVO PROJETO</small><h2 id="new-project-title">Cadastre sua obra</h2></div><button onClick={() => setCreating(false)}><X /></button></header><form onSubmit={submit}>
       {create.error && <ErrorNotice message={create.error.message} />}
       <label className="field span-2"><span>Nome do projeto</span><input name="nome" required minLength={3} placeholder="Ex.: CASA DALS" /></label>
