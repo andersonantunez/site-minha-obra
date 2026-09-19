@@ -39,8 +39,8 @@ describe('regras do pagamento', () => {
   })
 
   it('valida a Compra sem persistir classificação de documento', () => {
-    const budget = purchaseSchema.parse({ descricao: 'Compra de materiais' })
-    const invoice = purchaseSchema.parse({ descricao: 'Compra faturada', numero_nota_fiscal: 'NF-123' })
+    const budget = purchaseSchema.parse({ descricao: 'Compra de materiais', etapa_id: 1 })
+    const invoice = purchaseSchema.parse({ descricao: 'Compra faturada', etapa_id: 1, numero_nota_fiscal: 'NF-123' })
     expect(budget.numero_nota_fiscal).toBeNull()
     expect(invoice.numero_nota_fiscal).toBe('NF-123')
     expect(budget).not.toHaveProperty('classificacao')
@@ -56,9 +56,14 @@ describe('regras do pagamento', () => {
     expect(purchaseItemSchema.parse({ descricao: 'Item sem quantidade', valor_unitario: '1,2345' }).quantidade).toBeNull()
   })
 
+  it('exige etapa para criar uma Compra', () => {
+    expect(purchaseSchema.safeParse({ descricao: 'Compra sem etapa' }).success).toBe(false)
+    expect(purchaseSchema.safeParse({ descricao: 'Compra com etapa', etapa_id: 1 }).success).toBe(true)
+  })
+
   it('aceita total manual e descontos independentes no item e na compra', () => {
     const item = purchaseItemSchema.parse({ descricao: 'Tijolos', quantidade: '3000', valor_unitario: '1,8333', valor_desconto: '10,00', valor_total: '5.500,00' })
-    const purchase = purchaseSchema.parse({ descricao: 'Compra de tijolos', observacao: 'Entrega parcial', valor_desconto: '25,00' })
+    const purchase = purchaseSchema.parse({ descricao: 'Compra de tijolos', etapa_id: 1, observacao: 'Entrega parcial', valor_desconto: '25,00' })
     expect(item.valor_total).toBe(5500)
     expect(item.valor_desconto).toBe(10)
     expect(purchase.valor_desconto).toBe(25)
@@ -70,6 +75,6 @@ describe('regras do pagamento', () => {
   })
 
   it('aceita o prefixo visual +55 sem telefone em um campo opcional', () => {
-    expect(purchaseSchema.parse({ descricao: 'Compra sem telefone', contato_fornecedor: '+55 ' }).contato_fornecedor).toBeNull()
+    expect(purchaseSchema.parse({ descricao: 'Compra sem telefone', etapa_id: 1, contato_fornecedor: '+55 ' }).contato_fornecedor).toBeNull()
   })
 })

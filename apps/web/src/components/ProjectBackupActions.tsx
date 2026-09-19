@@ -20,7 +20,7 @@ export function ProjectBackupActions({ projectId }: { projectId: string }) {
     if(!selected.name.toLowerCase().endsWith('.json')){setError('Selecione um arquivo com extensão .json.');return}
     try{
       const parsed=JSON.parse(await selected.text()) as {backup?:{version?:unknown;project?:{nome?:unknown}}}
-      if(parsed.backup?.version!=='1.0')throw new Error('Versão incompatível. Este sistema aceita backups na versão 1.0.')
+      if(parsed.backup?.version!=='2.0')throw new Error('Versão incompatível. Este sistema aceita backups na versão 2.0.')
       if(typeof parsed.backup.project?.nome!=='string'||!parsed.backup.project.nome.trim())throw new Error('O arquivo não contém os dados obrigatórios do projeto.')
       setFile(selected);setProjectName(parsed.backup.project.nome)
     }catch(reason){setError(reason instanceof SyntaxError?'O arquivo não contém um JSON válido.':reason instanceof Error?reason.message:'Não foi possível validar o arquivo.')}

@@ -1,100 +1,121 @@
 import ExcelJS from 'exceljs'
-import PDFDocument from 'pdfkit'
+import { reportPdf, pdfTable, pdfReportIndicators, pdfReportTotal, finishReportPdf, reportContrastColor, reportTintColor, type ReportColumn } from '../../shared/report-pdf.js'
 import { query } from '../../config/database.js'
 import { AppError } from '../../shared/errors.js'
-import { cashFlowCte, cashFlowFilter } from '../orcamento/cash-flow.query.js'
-import { SETTLED_PAYMENT_STATUSES } from '../pagamentos/payment-status.js'
-import { paymentFinancialCte } from '../pagamentos/purchase-financial.query.js'
+import { getCashFlowData, type CashFlowFilters } from '../orcamento/cash-flow.service.js'
+import { getSchedule, type ScheduleRow } from '../etapas/schedule.service.js'
+import { reportMoney as formatMoney, reportDate as formatDate, spreadsheetDate as excelDate, styleReportSheet } from '../../shared/report.js'
 
-type Project = { nome: string; cidade: string | null; estado: string | null }
-type CashFlowRow = { data: string; descricao: string; detalhes: string | null; quantidade: string | null; unidade: string | null; valor: string; provisionado: boolean; origem: string }
-type ScheduleRow = { ordem: number; etapa: string; tipo: string; data_inicio_previsto: string | null; data_fim_previsto: string | null; valor_previsto: string; data_inicio: string | null; data_fim: string | null; valor_pago: string }
-type CashFlowFilters = { search: string; start: string | null; end: string | null; includeFuture: boolean }
-
-const formatDate = (value: string | Date | null) => {
-  if (!value) return '-'
-  const iso = value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10)
-  return iso.split('-').reverse().join('/')
-}
-const formatMoney = (value: string | number) => new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(value))
-const excelDate = (value: string | Date | null) => {
-  if (!value) return null
-  const iso = value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10)
-  return new Date(`${iso}T12:00:00Z`)
-}
+type Project = { nome: string; endereco?:string|null; cep?:string|null; logradouro?:string|null; numero?:string|null; complemento?:string|null; bairro?:string|null; cidade: string | null; estado: string | null; latitude?:string|null; longitude?:string|null }
+type CashFlowReportRow = { origem_id:number; fornecedor:string|null; data:string; descricao:string; detalhes:string|null; valor:string; provisionado:boolean; origem:string }
 
 async function getProject(projectId: number) {
-  const result = await query<Project>('SELECT nome,cidade,estado FROM projetos WHERE id=$1 AND excluido_em IS NULL',[projectId])
+  const result = await query<Project>('SELECT nome,endereco,cep,logradouro,numero,complemento,bairro,cidade,estado,latitude,longitude FROM projetos WHERE id=$1 AND excluido_em IS NULL',[projectId])
   if (!result.rows[0]) throw new AppError(404,'Projeto não encontrado.','PROJETO_NAO_ENCONTRADO')
   return result.rows[0]
 }
 
 export async function getCashFlowReport(projectId: number, filters: CashFlowFilters) {
-  const [project,entries] = await Promise.all([
+  const [project,data] = await Promise.all([
     getProject(projectId),
-    query<CashFlowRow>(`${cashFlowCte} SELECT data,descricao,detalhes,quantidade,unidade,valor,(data>CURRENT_DATE) AS provisionado,origem
-      FROM fluxo ${cashFlowFilter} ORDER BY data DESC,origem_id DESC`,[projectId,SETTLED_PAYMENT_STATUSES,`%${filters.search}%`,filters.start,filters.end,filters.includeFuture]),
+    getCashFlowData(projectId,filters),
   ])
-  return { project, rows: entries.rows }
+  const rows:CashFlowReportRow[]=data.itens.map(({origem_id,fornecedor,data,descricao,detalhes,valor,provisionado,origem})=>({origem_id,fornecedor,data,descricao,detalhes,valor,provisionado,origem}))
+  return { projectId, project, rows }
 }
 
-export async function getScheduleReport(projectId: number) {
+export async function getScheduleReport(projectId: number, options:{planned?:boolean;sort?:string;direction?:string}={}) {
   const [project,stages] = await Promise.all([
     getProject(projectId),
-    query<ScheduleRow>(`WITH ${paymentFinancialCte} SELECT c.ordem,
-      CASE WHEN pai.id IS NULL THEN 'ETAPA '||c.ordem||' - '||c.nome ELSE 'ETAPA '||pai.ordem||' - '||pai.nome||' / '||c.nome END AS etapa,
-      CASE WHEN pai.id IS NULL THEN 'Etapa' ELSE 'Subitem' END AS tipo,
-      c.data_inicio_previsto,c.data_fim_previsto,c.data_inicio,c.data_fim,
-      c.valor_previsto::numeric(15,2),
-      COALESCE((SELECT SUM(p.valor) FROM pagamentos_financeiros p WHERE p.projeto_id=c.projeto_id AND p.status=ANY($2::varchar[])
-        AND (p.etapa_id=c.id OR (c.parent_id IS NULL AND p.etapa_id IN (SELECT f.id FROM cronogramas f WHERE f.parent_id=c.id AND f.excluido_em IS NULL)))),0)::numeric(15,2) AS valor_pago
-      FROM cronogramas c LEFT JOIN cronogramas pai ON pai.id=c.parent_id
-      WHERE c.projeto_id=$1 AND c.excluido_em IS NULL
-      ORDER BY COALESCE(pai.ordem,c.ordem),c.parent_id NULLS FIRST,c.ordem,c.id`,[projectId,SETTLED_PAYMENT_STATUSES]),
+    getSchedule(projectId),
   ])
-  return { project, rows: stages.rows }
-}
-
-type PdfColumn<T> = { label: string; width: number; value: (row:T)=>string; align?: 'left'|'right' }
-function createTablePdf<T>(title: string, project: Project, rows: T[], columns: PdfColumn<T>[]) {
-  const document = new PDFDocument({size:'A4',layout:'landscape',margins:{top:36,right:36,bottom:38,left:36},bufferPages:true,info:{Title:`${title} - ${project.nome}`}})
-  const left=36; const width=770; const pageBottom=520
-  const header=()=>{document.fillColor('#202622').font('Helvetica-Bold').fontSize(17).text('MINHAOBRA',left,30);document.fillColor('#8a7257').fontSize(8).text(title.toUpperCase(),left,53,{characterSpacing:1});document.fillColor('#202622').fontSize(14).text(project.nome,left,70);document.fillColor('#737a75').font('Helvetica').fontSize(7.5).text([project.cidade,project.estado].filter(Boolean).join(' - ')||'Localidade não informada',left,90);document.text(`Emitido em ${new Intl.DateTimeFormat('pt-BR').format(new Date())}`,650,90,{width:156,align:'right'});document.y=112}
-  const tableHeader=()=>{const y=document.y;document.rect(left,y,width,24).fill('#303732');let x=left;for(const column of columns){document.fillColor('#fff').font('Helvetica-Bold').fontSize(6.5).text(column.label.toUpperCase(),x+5,y+8,{width:column.width-10,align:column.align||'left',height:10,ellipsis:true});x+=column.width}document.y=y+24}
-  const newPage=()=>{document.addPage();header();tableHeader()}
-  header();tableHeader()
-  rows.forEach((row,index)=>{const rowHeight=30;if(document.y+rowHeight>pageBottom)newPage();const y=document.y;if(index%2===1)document.rect(left,y,width,rowHeight).fill('#f7f6f2');let x=left;for(const column of columns){document.fillColor('#303632').font('Helvetica').fontSize(7).text(column.value(row),x+5,y+6,{width:column.width-10,height:20,align:column.align||'left',ellipsis:true});x+=column.width}document.moveTo(left,y+rowHeight).lineTo(left+width,y+rowHeight).strokeColor('#deddd7').stroke();document.y=y+rowHeight})
-  if(!rows.length)document.fillColor('#747a76').fontSize(9).text('Nenhum registro encontrado.',left,document.y+18)
-  const pages=document.bufferedPageRange();for(let index=0;index<pages.count;index+=1){document.switchToPage(index);document.fillColor('#8a8f8b').font('Helvetica').fontSize(7).text(`MinhaObra - Página ${index+1} de ${pages.count}`,left,545,{width,align:'center',lineBreak:false})}
-  return document
+  const key=(['ordem','nome','data_inicio_previsto','data_fim_previsto','valor_previsto','data_inicio','data_fim','valor_pago'].includes(options.sort||'')?options.sort:'ordem') as keyof ScheduleRow
+  const parents=[...stages.arvore].sort((a,b)=>{
+   const av=a[key],bv=b[key],am=av===null||av==='',bm=bv===null||bv===''
+   if(am!==bm)return am?1:-1
+   const numberA=Number(av),numberB=Number(bv)
+   const delta=av!==''&&bv!==''&&Number.isFinite(numberA)&&Number.isFinite(numberB)?numberA-numberB:String(av??'').toLocaleLowerCase('pt-BR').localeCompare(String(bv??'').toLocaleLowerCase('pt-BR'),'pt-BR',{numeric:true})
+   return options.direction==='desc'?-delta:delta
+  })
+  return { project, planned:options.planned??true, rows:parents.flatMap(({subitens,...parent})=>[parent,...subitens]) }
 }
 
 export function createCashFlowPdf(report: Awaited<ReturnType<typeof getCashFlowReport>>) {
-  return createTablePdf('Relatório de Fluxo de Caixa',report.project,report.rows,[
-    {label:'Data',width:70,value:r=>formatDate(r.data)},
-    {label:'Descrição',width:220,value:r=>r.descricao},
-    {label:'Detalhes',width:260,value:r=>[r.quantidade?`${Number(r.quantidade).toLocaleString('pt-BR',{maximumFractionDigits:3})} ${r.unidade||''}`:null,r.detalhes].filter(Boolean).join(' - ')},
-    {label:'Origem',width:85,value:r=>r.origem==='PAGAMENTO'?'Pagamento':'Manual'},
-    {label:'Valor',width:85,value:r=>formatMoney(r.valor),align:'right'},
-    {label:'Provisionado',width:50,value:r=>r.provisionado?'Sim':'Não'},
-  ])
+ const pdf=reportPdf('Fluxo de Caixa',report.project)
+ const entries=report.rows.reduce((total,row)=>total+Math.max(0,Number(row.valor)),0)
+ const exits=report.rows.reduce((total,row)=>total+Math.abs(Math.min(0,Number(row.valor))),0)
+ pdfReportIndicators(pdf,[
+  {label:'Entrada',value:formatMoney(entries),color:'#176e9b'},
+  {label:'Saída',value:formatMoney(exits),color:'#b54444'},
+  {label:'Saldo',value:formatMoney(entries-exits),color:'#303732'},
+ ])
+ pdfTable(pdf,report.rows,[
+ {label:'Data',width:75,value:r=>formatDate(r.data),align:'center',verticalAlign:'middle'},
+ {label:'Descrição',width:310,value:r=>r.descricao},
+ {label:'Fornecedor',width:170,value:r=>r.fornecedor||'—'},
+ {label:'Valor',width:120,value:r=>formatMoney(r.valor),align:'right'},
+ {label:'Provisionado',width:95,value:r=>r.provisionado?'Sim':'Não',align:'center'}])
+ pdfReportTotal(pdf,'Total do Fluxo de Caixa',formatMoney(report.rows.reduce((total,row)=>total+Number(row.valor),0)))
+ return finishReportPdf(pdf)
 }
-
+function scheduleReportColors(rows:ScheduleRow[]){
+ const parentColors=new Map(rows.filter(row=>row.parent_id===null).map(row=>[row.id,row.cor]))
+ return new Map(rows.map(row=>[row.id,row.parent_id===null?row.cor:parentColors.get(row.parent_id)||row.cor]))
+}
 export function createSchedulePdf(report: Awaited<ReturnType<typeof getScheduleReport>>) {
-  return createTablePdf('Relatório do Cronograma',report.project,report.rows,[
-    {label:'Ordem',width:42,value:r=>String(r.ordem)}, {label:'Etapa',width:210,value:r=>r.etapa},
+  const colors=scheduleReportColors(report.rows)
+  const plannedTextColor=(row:ScheduleRow)=>reportContrastColor(row.parent_id===null?colors.get(row.id)||'':reportTintColor(colors.get(row.id)||''))==='#ffffff'?'#ffd1cc':'#a33330'
+  const columns:ReportColumn<ScheduleRow>[]=[
+    {label:'Ordem',width:42,value:r=>String(r.ordem)}, {label:'Etapa',width:210,value:r=>r.parent_id===null?`ETAPA ${r.ordem} - ${r.nome}`:`    ${r.nome}`,secondary:r=>r.parent_id===null?r.descricao||'':''},
     {label:'Início previsto',width:75,value:r=>formatDate(r.data_inicio_previsto)}, {label:'Fim previsto',width:75,value:r=>formatDate(r.data_fim_previsto)},
-    {label:'Valor orçado',width:85,value:r=>formatMoney(r.valor_previsto),align:'right'}, {label:'Início',width:70,value:r=>formatDate(r.data_inicio)},
-    {label:'Fim',width:70,value:r=>formatDate(r.data_fim)}, {label:'Valor pago',width:85,value:r=>formatMoney(r.valor_pago),align:'right'},
-  ])
+    {label:'Valor orçado',width:85,value:r=>formatMoney(r.valor_previsto),align:'right'}, {label:'Início Real',width:70,value:r=>formatDate(r.data_inicio)},
+    {label:'Fim Real',width:70,value:r=>formatDate(r.data_fim)}, {label:'Valor pago',width:85,value:r=>formatMoney(r.valor_pago),align:'right'},
+  ]
+  columns.splice(0,columns.length,
+    {label:'Ordem',width:42,value:r=>String(r.ordem)},
+    {label:'Etapa',width:180,value:r=>r.parent_id===null?`ETAPA ${r.ordem} - ${r.nome}`:`    ${r.nome}`,secondary:r=>r.parent_id===null?(r.descricao||''):''},
+    {label:'Início Previsto',width:85,value:r=>formatDate(r.data_inicio_previsto),align:'center',verticalAlign:'middle',headerTextColor:'#ffd1cc',textColor:plannedTextColor},
+    {label:'Fim Previsto',width:85,value:r=>formatDate(r.data_fim_previsto),align:'center',verticalAlign:'middle',headerTextColor:'#ffd1cc',textColor:plannedTextColor},
+    {label:'Valor Orçado',width:105,value:r=>formatMoney(r.valor_previsto),align:'right',verticalAlign:'middle',headerTextColor:'#ffd1cc',textColor:plannedTextColor},
+    {label:'Início Real',width:80,value:r=>formatDate(r.data_inicio),align:'center',verticalAlign:'middle'},
+    {label:'Fim Real',width:80,value:r=>formatDate(r.data_fim),align:'center',verticalAlign:'middle'},
+    {label:'Valor Pago',width:113,value:r=>formatMoney(r.valor_pago),align:'right',verticalAlign:'middle'},
+  )
+  const visible=columns.filter(column=>report.planned||!['Início previsto','Fim previsto','Valor orçado'].includes(column.label))
+  const totalWidth=visible.reduce((n,c)=>n+c.width,0)
+  const pdf=reportPdf('Cronograma',report.project)
+  const rowColor=(row:ScheduleRow)=>row.parent_id===null?colors.get(row.id):reportTintColor(colors.get(row.id)||'')
+  pdfTable(pdf,report.rows,visible.map(column=>({...column,width:column.width*770/totalWidth})),{parent:row=>row.parent_id===null,keepNext:row=>row.parent_id===null,rowBackground:rowColor,rowTextColor:row=>reportContrastColor(rowColor(row)||'')})
+  report.planned=true
+  const parents=report.rows.filter(row=>row.parent_id===null)
+  if(report.planned)pdfReportTotal(pdf,'Total Valor Orçado',formatMoney(parents.reduce((total,row)=>total+Number(row.valor_previsto),0)))
+  pdfReportTotal(pdf,'Total Valor Pago',formatMoney(parents.reduce((total,row)=>total+Number(row.valor_pago),0)))
+  return finishReportPdf(pdf)
 }
-
-function styleWorksheet(sheet: ExcelJS.Worksheet,lastColumn:string){sheet.getRow(1).height=24;sheet.getRow(1).eachCell(cell=>{cell.font={bold:true,color:{argb:'FFFFFFFF'}};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF303732'}};cell.alignment={vertical:'middle',horizontal:'center'}});sheet.autoFilter={from:'A1',to:`${lastColumn}1`};sheet.eachRow((row,index)=>{if(index>1)row.alignment={vertical:'top',wrapText:true}})}
 
 export async function createCashFlowWorkbook(report: Awaited<ReturnType<typeof getCashFlowReport>>) {
-  const workbook=new ExcelJS.Workbook();workbook.creator='MinhaObra';const sheet=workbook.addWorksheet('Fluxo de Caixa',{views:[{state:'frozen',ySplit:1}]});sheet.columns=[{header:'Data',key:'data',width:14},{header:'Descrição',key:'descricao',width:42},{header:'Detalhes',key:'detalhes',width:60},{header:'Quantidade',key:'quantidade',width:14},{header:'Unidade',key:'unidade',width:15},{header:'Origem',key:'origem',width:16},{header:'Valor',key:'valor',width:18},{header:'Provisionado',key:'provisionado',width:15}];for(const row of report.rows)sheet.addRow({...row,data:excelDate(row.data),quantidade:row.quantidade===null?null:Number(row.quantidade),valor:Number(row.valor),origem:row.origem==='PAGAMENTO'?'Pagamento':'Manual',provisionado:row.provisionado?'Sim':'Não'});sheet.getColumn('data').numFmt='dd/mm/yyyy';sheet.getColumn('valor').numFmt='R$ #,##0.00;[Red]-R$ #,##0.00';styleWorksheet(sheet,'H');return workbook.xlsx.writeBuffer()
+  const workbook=new ExcelJS.Workbook();workbook.creator='MinhaObra'
+  const sheet=workbook.addWorksheet('Fluxo de Caixa',{views:[{state:'frozen',ySplit:1}]})
+  sheet.columns=[{header:'Data',key:'data',width:14},{header:'Descrição',key:'descricao',width:50},{header:'Fornecedor',key:'fornecedor',width:32},{header:'Valor',key:'valor',width:20},{header:'Provisionado',key:'provisionado',width:16}]
+  for(const row of report.rows)sheet.addRow({...row,data:excelDate(row.data),valor:Number(row.valor),provisionado:row.provisionado?'Sim':'Não'})
+  sheet.getColumn('data').numFmt='dd/mm/yyyy';sheet.getColumn('valor').numFmt='R$ #,##0.00;[Red]-R$ #,##0.00';styleReportSheet(sheet)
+  const total=sheet.addRow({descricao:'Total do Fluxo de Caixa',valor:report.rows.reduce((sum,row)=>sum+Number(row.valor),0)})
+  total.font={bold:true};total.getCell('valor').numFmt='R$ #,##0.00'
+  return workbook.xlsx.writeBuffer()
 }
 
 export async function createScheduleWorkbook(report: Awaited<ReturnType<typeof getScheduleReport>>) {
-  const workbook=new ExcelJS.Workbook();workbook.creator='MinhaObra';const sheet=workbook.addWorksheet('Cronograma',{views:[{state:'frozen',ySplit:1}]});sheet.columns=[{header:'Ordem',key:'ordem',width:10},{header:'Etapa',key:'etapa',width:48},{header:'Data de início Previsto',key:'data_inicio_previsto',width:22},{header:'Data de fim Previsto',key:'data_fim_previsto',width:22},{header:'Valor Orçado',key:'valor_previsto',width:18},{header:'Data de Início',key:'data_inicio',width:18},{header:'Data de Fim',key:'data_fim',width:18},{header:'Valor Pago',key:'valor_pago',width:18}];for(const row of report.rows)sheet.addRow({...row,data_inicio_previsto:excelDate(row.data_inicio_previsto),data_fim_previsto:excelDate(row.data_fim_previsto),data_inicio:excelDate(row.data_inicio),data_fim:excelDate(row.data_fim),valor_previsto:Number(row.valor_previsto),valor_pago:Number(row.valor_pago)});for(const key of ['data_inicio_previsto','data_fim_previsto','data_inicio','data_fim'])sheet.getColumn(key).numFmt='dd/mm/yyyy';for(const key of ['valor_previsto','valor_pago'])sheet.getColumn(key).numFmt='R$ #,##0.00';styleWorksheet(sheet,'H');return workbook.xlsx.writeBuffer()
+  const colors=scheduleReportColors(report.rows)
+  const workbook=new ExcelJS.Workbook();workbook.creator='MinhaObra'
+  const sheet=workbook.addWorksheet('Cronograma',{views:[{state:'frozen',ySplit:1}]})
+  sheet.columns=[{header:'Ordem',key:'ordem',width:10},{header:'Etapa / Descrição',key:'etapa',width:48},{header:'Início Previsto',key:'data_inicio_previsto',width:20},{header:'Fim Previsto',key:'data_fim_previsto',width:20},{header:'Valor orçado',key:'valor_previsto',width:20},{header:'Início Real',key:'data_inicio',width:20},{header:'Fim Real',key:'data_fim',width:20},{header:'Valor pago',key:'valor_pago',width:20}].filter(column=>report.planned||!['data_inicio_previsto','data_fim_previsto','valor_previsto'].includes(column.key))
+  for(const row of report.rows)sheet.addRow({...row,etapa:(row.parent_id===null?`ETAPA ${row.ordem} - ${row.nome}`:`    ${row.nome}`)+(row.parent_id===null&&row.descricao?`\n${row.descricao}`:''),...Object.fromEntries(['data_inicio_previsto','data_fim_previsto','data_inicio','data_fim'].map(key=>[key,excelDate(row[key as 'data_inicio'])])),valor_previsto:Number(row.valor_previsto),valor_pago:Number(row.valor_pago)})
+  for(const key of ['data_inicio_previsto','data_fim_previsto','data_inicio','data_fim']){if(report.planned||!key.endsWith('_previsto'))sheet.getColumn(key).numFmt='dd/mm/yyyy'}
+  for(const key of ['valor_previsto','valor_pago']){if(report.planned||key!=='valor_previsto')sheet.getColumn(key).numFmt='R$ #,##0.00'}
+  styleReportSheet(sheet);report.rows.forEach((row,i)=>{if(row.parent_id===null)sheet.getRow(i+2).eachCell(cell=>{cell.font={bold:true};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFEAE6DF'}}})})
+  report.rows.forEach((row,index)=>{sheet.getRow(index+2).getCell('etapa').border={left:{style:'medium',color:{argb:`FF${colors.get(row.id)!.slice(1).toUpperCase()}`}}}})
+  const parents=report.rows.filter(row=>row.parent_id===null)
+  if(report.planned){const totalPlanned=sheet.addRow({etapa:'Total Valor Orçado',valor_previsto:parents.reduce((sum,row)=>sum+Number(row.valor_previsto),0)});totalPlanned.font={bold:true};totalPlanned.getCell('valor_previsto').numFmt='R$ #,##0.00'}
+  const totalPaid=sheet.addRow({etapa:'Total Valor Pago',valor_pago:parents.reduce((sum,row)=>sum+Number(row.valor_pago),0)});totalPaid.font={bold:true};totalPaid.getCell('valor_pago').numFmt='R$ #,##0.00'
+  return workbook.xlsx.writeBuffer()
 }

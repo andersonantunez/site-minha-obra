@@ -33,7 +33,7 @@ const supplierPhone = z.preprocess(normalizeBrazilianPhone, z.string().regex(/^5
 
 export const purchaseSchema = z.object({
   descricao: z.string().trim().min(2).max(240),
-  etapa_id: z.coerce.number().int().positive().optional().nullable(),
+  etapa_id: z.coerce.number().int().positive(),
   status: z.enum(PAYMENT_STATUS_VALUES).default('PENDENTE'),
   data_pagamento: optionalDate,
   forma_pagamento: z.enum(['PIX', 'CARTAO', 'DINHEIRO', 'BOLETO', 'TRANSFERENCIA', 'OUTRO']).optional().nullable(),

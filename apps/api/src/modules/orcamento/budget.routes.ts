@@ -5,12 +5,12 @@ import { query, withTransaction } from '../../config/database.js'
 import { requireAuth } from '../../shared/auth.js'
 import { recordAudit } from '../../shared/audit.js'
 import { AppError } from '../../shared/errors.js'
+import { importExample } from '../../shared/import-examples.js'
 import { parseBrazilianNumber, parseImportContent } from '../../shared/importParser.js'
 import { requireProjectPermission } from '../../shared/projectAccess.js'
 import { validateBody } from '../../shared/validation.js'
-import { SETTLED_PAYMENT_STATUSES } from '../pagamentos/payment-status.js'
 import { createCashFlowPdf, createCashFlowWorkbook, getCashFlowReport } from '../relatorios/planning-report.service.js'
-import { cashFlowCte, cashFlowFilter } from './cash-flow.query.js'
+import { getCashFlowData } from './cash-flow.service.js'
 
 function normalizeDate(value: unknown) {
   if (typeof value !== 'string') return value
@@ -29,25 +29,20 @@ const cashFlowSchema = z.object({
   data: z.preprocess(normalizeDate, z.iso.date()),
   descricao: z.string().trim().min(2).max(240),
   detalhes: z.string().trim().max(4_000).optional().nullable().transform((value) => value || null),
-  valor: z.preprocess(parseBrazilianNumber, z.coerce.number().min(-999_999_999_999.99).max(999_999_999_999.99)),
+  valor: z.preprocess(value=>value===null||value===''?undefined:parseBrazilianNumber(value), z.coerce.number().min(-999_999_999_999.99).max(999_999_999_999.99)),
 })
 
 const importSchema = z.object({
   formato: z.enum(['TSV', 'JSON']), conteudo: z.string().min(2), modo: z.enum(['ACRESCENTAR', 'SUBSTITUIR']).optional(), nomeArquivo: z.string().max(255).optional(),
 })
 
-async function parseEntries(format: 'TSV' | 'JSON', content: string) {
+export async function parseEntries(format: 'TSV' | 'JSON', content: string) {
   const raw = parseImportContent(format, content)
   const valid: z.infer<typeof cashFlowSchema>[] = []
   const errors: { linha: number; erros: string[] }[] = []
   for (let index = 0; index < raw.length; index += 1) {
     const source = raw[index] as Record<string, unknown>
-    const result = cashFlowSchema.safeParse({
-      data: source?.data ?? source?.data_lancamento ?? source?.competencia,
-      descricao: source?.descricao,
-      detalhes: source?.detalhes ?? source?.observacao ?? source?.observacoes,
-      valor: source?.valor,
-    })
+    const result = cashFlowSchema.strict().safeParse(source)
     if (result.success) valid.push(result.data)
     else errors.push({ linha: index + 2, erros: result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`) })
   }
@@ -65,20 +60,8 @@ budgetRouter.get('/', requireProjectPermission('orcamento.visualizar'), async (r
   const end = req.query.dataFim ? z.iso.date().parse(String(req.query.dataFim)) : null
   const includeFuture = String(req.query.incluirFuturos || 'false') === 'true'
   if (start && end && end < start) throw new AppError(422, 'A data final não pode ser anterior à data inicial.', 'PERIODO_INVALIDO')
-  const params = [req.acessoProjeto!.projetoId,SETTLED_PAYMENT_STATUSES,`%${search}%`,start,end,includeFuture]
-  const [items, totals] = await Promise.all([
-      query(`${cashFlowCte} SELECT id,origem,payment_record_type,origem_id,data,descricao,detalhes,quantidade,unidade,fornecedor,payment_status,data_agendamento,data_entrega,forma_pagamento,chave_pix,contato_fornecedor,nome_contato_fornecedor,payment_etapa,payment_observacao,valor,editavel,(data>CURRENT_DATE) AS provisionado
-      FROM fluxo ${cashFlowFilter} ORDER BY data DESC,origem_id DESC LIMIT $7 OFFSET $8`, [...params,pageSize,(page-1)*pageSize]),
-    query<{ total: number; total_entrada: string; total_saida: string; saldo_atual: string; saldo_com_provisao: string }>(`${cashFlowCte}
-      SELECT COUNT(*)::int AS total,
-        COALESCE(SUM(valor) FILTER (WHERE valor>0),0)::numeric(15,2) AS total_entrada,
-        COALESCE(ABS(SUM(valor) FILTER (WHERE valor<0)),0)::numeric(15,2) AS total_saida,
-        COALESCE(SUM(valor) FILTER (WHERE data<=CURRENT_DATE),0)::numeric(15,2) AS saldo_atual,
-        COALESCE(SUM(valor),0)::numeric(15,2) AS saldo_com_provisao
-      FROM fluxo ${cashFlowFilter}`, params),
-  ])
-  const summary = totals.rows[0]!
-  res.json({ itens: items.rows, pagina: page, porPagina: pageSize, total: summary.total, indicadores: summary })
+  const data=await getCashFlowData(req.acessoProjeto!.projetoId,{search,start,end,includeFuture},{page,pageSize})
+  res.json({ ...data, pagina:page, porPagina:pageSize })
 })
 
 budgetRouter.get('/despesas/:despesaId/detalhes', requireProjectPermission('orcamento.visualizar'), async (req, res) => {
@@ -129,6 +112,8 @@ budgetRouter.delete('/:itemId', requireProjectPermission('orcamento.excluir'), a
   res.status(204).end()
 })
 
+budgetRouter.get('/importacao/modelo', requireProjectPermission('orcamento.inserir'), (req,res)=>{const format=z.enum(['TSV','JSON']).parse(req.query.formato||'JSON');res.type(format==='JSON'?'application/json':'text/tab-separated-values').attachment(`fluxo-caixa.${format.toLowerCase()}`).send(importExample('fluxo-caixa',format))})
+
 budgetRouter.post('/importacao/preview', requireProjectPermission('orcamento.inserir'), validateBody(importSchema), async (req, res) => {
   res.json(await parseEntries(req.body.formato, req.body.conteudo))
 })
@@ -136,6 +121,7 @@ budgetRouter.post('/importacao/preview', requireProjectPermission('orcamento.ins
 budgetRouter.post('/importacao/confirmar', requireProjectPermission('orcamento.inserir'), validateBody(importSchema.required({ modo: true })), async (req, res) => {
   const parsed = await parseEntries(req.body.formato, req.body.conteudo)
   if (parsed.erros.length) throw new AppError(422, 'A importação possui erros e não foi aplicada.', 'IMPORTACAO_INVALIDA', parsed.erros)
+  if(req.body.modo==='SUBSTITUIR'&&!req.acessoProjeto!.permissoes.has('orcamento.excluir')&&!req.acessoProjeto!.proprietario&&!req.acessoProjeto!.administradorSistema)throw new AppError(403,'A substituição exige permissão para excluir lançamentos.','ACESSO_NEGADO')
   const id = await withTransaction(async (client) => {
     if (req.body.modo === 'SUBSTITUIR') await client.query('UPDATE itens_orcamento SET excluido_em=NOW() WHERE projeto_id=$1 AND excluido_em IS NULL', [req.acessoProjeto!.projetoId])
     for (const row of parsed.registros) await client.query(`INSERT INTO itens_orcamento

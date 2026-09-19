@@ -13,10 +13,10 @@ try {
   const token = jwt.sign({ tipo: 'sessao' }, process.env.JWT_SECRET, {
     subject: String(rows[0].usuario_id), expiresIn: '10m', issuer: 'minhaobra-api', audience: 'minhaobra-web',
   })
-  const response = await fetch(`http://127.0.0.1:3002/api/projetos/${rows[0].projeto_id}/pagamentos/relatorio.pdf`, { headers: { Authorization: `Bearer ${token}` } })
+  const response = await fetch(`http://127.0.0.1:3002/api/projetos/${rows[0].projeto_id}/despesas/relatorio.pdf`, { headers: { Authorization: `Bearer ${token}` } })
   if (!response.ok) throw new Error(`Relatório respondeu ${response.status}: ${await response.text()}`)
   await mkdir('output/pdf', { recursive: true })
-  await writeFile('output/pdf/relatorio-pagamentos-exemplo.pdf', Buffer.from(await response.arrayBuffer()))
+  await writeFile('output/pdf/relatorio-despesas-exemplo.pdf', Buffer.from(await response.arrayBuffer()))
   console.log(`PDF gerado para o projeto ${rows[0].projeto_id}.`)
 } finally {
   await pool.end()

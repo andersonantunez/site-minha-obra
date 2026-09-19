@@ -6,6 +6,7 @@ import { EmptyState, ErrorNotice, PageHeader } from '../components/Ui'
 import { api } from '../lib/api'
 import { chartPalette, distributionChartColors } from '../lib/chartPalette'
 import { formatDate, formatMoney, formatMonth } from '../lib/format'
+import { ScheduleGantt } from '../components/ScheduleGantt'
 
 type Project = {
   nome: string
@@ -45,6 +46,7 @@ type Dashboard = {
   }
   evolucaoFinanceira: { mes: string; previsto: string; realizado: string }[]
   distribuicaoEtapas: { etapa: string; total: string }[]
+  fornecedores: { fornecedor: string; total: string }[]
 }
 
 type DonutItem = { name: string; value: number; color: string }
@@ -171,6 +173,7 @@ export function ProjectDashboardPage() {
   ].filter((entry): entry is [string, string] => Boolean(entry[1]))
   const distribution: DonutItem[] = data.distribuicaoEtapas.map((item, index) => ({ name: item.etapa, value: Number(item.total), color: distributionChartColors[index % distributionChartColors.length]! }))
   const monthlyPayments = buildMonthlyPayments(data.evolucaoFinanceira)
+  const supplierPayments = data.fornecedores.map((item) => ({ ...item, total: Number(item.total) }))
   const projectImage = projeto.imagem_apresentacao_url || (projeto.imagem_apresentacao_id ? `/api/projetos/${projetoId}/dashboard/imagem-apresentacao` : '')
 
   return <div className="dashboard-page overview-dashboard">
@@ -226,6 +229,13 @@ export function ProjectDashboardPage() {
           </div> : <EmptyState title="Sem pagamentos distribuídos" description="Os pagamentos efetivos aparecerão agrupados por etapa." />}
         </article>
 
+        <article className="dashboard-panel overview-supplier-panel">
+          <DashboardPanelHeader eyebrow="CONCENTRAÇÃO DOS PAGAMENTOS" title="Pagamentos por fornecedor" help="Soma os pagamentos efetivos por fornecedor, para identificar quem recebeu os maiores valores." helpId="help-suppliers" />
+          {supplierPayments.length ? <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={supplierPayments} layout="vertical" margin={{ top: 8, right: 18, left: 0, bottom: 8 }}><CartesianGrid stroke="#e7e4dc" horizontal={false} /><XAxis type="number" tickFormatter={(value) => `${Math.round(Number(value) / 1000)} mil`} tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: '#8b8f8c' }} /><YAxis type="category" dataKey="fornecedor" width={120} tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: '#747975' }} /><RechartsTooltip formatter={(value) => [formatMoney(Number(value)), 'Total pago']} /><Bar dataKey="total" name="Total pago" fill={PAYMENT_COLOR} radius={[0, 3, 3, 0]} maxBarSize={28} /></BarChart>
+          </ResponsiveContainer> : <EmptyState title="Sem pagamentos por fornecedor" description="Os fornecedores aparecerão quando houver pagamentos efetivos registrados." />}
+        </article>
+
         <article className="dashboard-panel overview-monthly-panel">
           <DashboardPanelHeader eyebrow="EVOLUÇÃO DOS PAGAMENTOS" title="Pagamentos por mês/ano" help="Soma os pagamentos efetivos pela data de pagamento e mantém os meses em sequência cronológica." helpId="help-monthly" />
           {monthlyPayments.length ? <ResponsiveContainer width="100%" height={280}>
@@ -234,5 +244,6 @@ export function ProjectDashboardPage() {
         </article>
       </div>
     </section>
+    <ScheduleGantt key={projetoId} projectId={projetoId||''}/>
   </div>
 }

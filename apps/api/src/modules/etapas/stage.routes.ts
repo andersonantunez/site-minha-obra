@@ -5,13 +5,12 @@ import { query, withTransaction } from '../../config/database.js'
 import { requireAuth } from '../../shared/auth.js'
 import { recordAudit } from '../../shared/audit.js'
 import { AppError } from '../../shared/errors.js'
+import { importExample } from '../../shared/import-examples.js'
 import { parseBrazilianNumber, parseImportContent } from '../../shared/importParser.js'
 import { requireProjectPermission } from '../../shared/projectAccess.js'
 import { validateBody } from '../../shared/validation.js'
-import { SETTLED_PAYMENT_STATUSES } from '../pagamentos/payment-status.js'
-import { paymentFinancialCte } from '../pagamentos/purchase-financial.query.js'
+import { getSchedule } from './schedule.service.js'
 import { createSchedulePdf, createScheduleWorkbook, getScheduleReport } from '../relatorios/planning-report.service.js'
-import { activeScheduleStageOrder, activeScheduleStageWhere } from './stage-query.js'
 
 const nullableDate = z.union([z.iso.date(), z.literal(''), z.null()]).optional().transform((value) => value || null)
 const scheduleSchema = z.object({
@@ -43,51 +42,27 @@ function normalizeDate(value: unknown) {
   return `${year}-${month}-${day}`
 }
 
-function normalizeImportRows(format: 'TSV' | 'JSON', content: string): unknown[] {
-  const source = parseImportContent(format, content)
-  if (format === 'TSV') return source
-  const flattened: unknown[] = []
-  for (const raw of source) {
-    if (!raw || typeof raw !== 'object') { flattened.push(raw); continue }
-    const stage = raw as Record<string, unknown>
-    const stageName = stage.etapa ?? stage.nome
-    flattened.push({ ...stage, tipo: 'ETAPA', etapa: stageName, subitens: undefined })
-    if (Array.isArray(stage.subitens)) {
-      for (const child of stage.subitens) flattened.push({ ...(child as object), tipo: 'SUBITEM', etapa_pai: stageName })
-    }
-  }
-  return flattened
-}
-
-function parseSchedule(format: 'TSV' | 'JSON', content: string) {
-  const raw = normalizeImportRows(format, content)
-  const valid: ImportRow[] = []
-  const errors: { linha: number; erros: string[] }[] = []
-  raw.forEach((item, index) => {
-    if (!item || typeof item !== 'object') { errors.push({ linha: index + 2, erros: ['Registro inválido.'] }); return }
-    const row = item as Record<string, unknown>
-    const parentReference = row.etapa_pai ?? row.pai ?? row.parent
-    const normalizedType = String(row.tipo || (parentReference ? 'SUBITEM' : 'ETAPA')).trim().toUpperCase()
-    const type = normalizedType === 'SUBITEM' ? 'SUBITEM' : normalizedType === 'ETAPA' ? 'ETAPA' : null
-    const normalized = {
-      parent_id: null,
-      nome: type === 'SUBITEM' ? row.descricao ?? row.nome ?? row.subitem : row.etapa ?? row.nome,
-      descricao: type === 'ETAPA' ? row.descricao : row.observacao,
-      data_inicio_previsto: normalizeDate(row.data_inicio_previsto ?? row.inicio_previsto ?? row.dataInicioPrevisto),
-      data_fim_previsto: normalizeDate(row.data_fim_previsto ?? row.fim_previsto ?? row.dataFimPrevisto),
-      data_inicio: normalizeDate(row.data_inicio ?? row.inicio ?? row.dataInicio),
-      data_fim: normalizeDate(row.data_fim ?? row.fim ?? row.dataFim),
-      valor_previsto: row.valor_previsto ?? row.valor_orcado ?? row.valorPrevisto ?? 0,
-      ordem: row.ordem ?? 0,
-    }
-    const result = scheduleSchema.safeParse(normalized)
-    const rowErrors = result.success ? [] : result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`)
-    if (!type) rowErrors.push('tipo: use ETAPA ou SUBITEM')
-    if (type === 'SUBITEM' && !parentReference) rowErrors.push('etapa_pai: informe a etapa do subitem')
-    if (rowErrors.length || !result.success || !type) errors.push({ linha: index + 2, erros: rowErrors })
-    else valid.push({ ...result.data, tipo: type, etapa_pai: parentReference ? String(parentReference).trim() : null })
+export function parseSchedule(format:'TSV'|'JSON',content:string){
+  const raw=parseImportContent(format,content)
+  const valid:ImportRow[]=[]
+  const errors:{linha:number;erros:string[]}[]=[]
+  const schema=z.object({...scheduleSchema.shape,tipo:z.enum(['ETAPA','SUBITEM']),etapa_pai:z.string().trim().optional().nullable()}).omit({parent_id:true}).strict()
+  raw.forEach((value,index)=>{
+    const source=value as Record<string,unknown>
+    const result=schema.safeParse({...source,data_inicio_previsto:normalizeDate(source.data_inicio_previsto),data_fim_previsto:normalizeDate(source.data_fim_previsto),data_inicio:normalizeDate(source.data_inicio),data_fim:normalizeDate(source.data_fim)})
+    if(!result.success){errors.push({linha:index+2,erros:result.error.issues.map(issue=>`${issue.path.join('.')}: ${issue.message}`)});return}
+    const row=result.data
+    const issues:string[]=[]
+    if(row.tipo==='SUBITEM'&&!row.etapa_pai)issues.push('etapa_pai: informe exatamente o nome da etapa pai.')
+    if(row.tipo==='ETAPA'&&row.etapa_pai)issues.push('etapa_pai: uma etapa não pode ter pai.')
+    if(row.data_inicio_previsto&&row.data_fim_previsto&&row.data_fim_previsto<row.data_inicio_previsto)issues.push('data_fim_previsto: anterior ao início previsto.')
+    if(row.data_inicio&&row.data_fim&&row.data_fim<row.data_inicio)issues.push('data_fim: anterior ao início real.')
+    if(issues.length)errors.push({linha:index+2,erros:issues})
+    else valid.push({...row,parent_id:null,etapa_pai:row.etapa_pai||null})
   })
-  return { registros: valid, erros: errors, total: raw.length }
+  const names=new Set<string>()
+  valid.filter(row=>row.tipo==='ETAPA').forEach(row=>{const key=row.nome.toLowerCase();if(names.has(key))errors.push({linha:2,erros:[`Etapa duplicada no arquivo: ${row.nome}.`]});names.add(key)})
+  return {registros:valid,erros:errors,total:raw.length}
 }
 
 async function ensureParent(projectId: number, parentId: number | null | undefined) {
@@ -115,25 +90,13 @@ export const stagesRouter = Router({ mergeParams: true })
 stagesRouter.use(requireAuth)
 
 stagesRouter.get('/', requireProjectPermission('etapas.visualizar'), async (req, res) => {
-  const search = String(req.query.busca || '').trim()
   const projectId = req.acessoProjeto!.projetoId
-  const { rows } = await query(`WITH ${paymentFinancialCte} SELECT c.id,c.parent_id,c.nome,c.descricao,c.cor,c.data_inicio_previsto,c.data_fim_previsto,c.data_inicio,c.data_fim,c.ordem,c.criado_em,c.atualizado_em,
-    CASE WHEN c.parent_id IS NULL AND EXISTS (SELECT 1 FROM cronogramas f WHERE f.parent_id=c.id AND f.excluido_em IS NULL)
-      THEN COALESCE((SELECT SUM(f.valor_previsto) FROM cronogramas f WHERE f.parent_id=c.id AND f.excluido_em IS NULL),0)
-      ELSE c.valor_previsto END::numeric(15,2) AS valor_previsto,
-    COALESCE((SELECT SUM(p.valor) FROM pagamentos_financeiros p WHERE p.projeto_id=c.projeto_id AND p.status=ANY($3::varchar[])
-      AND (p.etapa_id=c.id OR (c.parent_id IS NULL AND p.etapa_id IN (SELECT f.id FROM cronogramas f WHERE f.parent_id=c.id AND f.excluido_em IS NULL)))),0)::numeric(15,2) AS valor_pago
-    FROM cronogramas c WHERE c.projeto_id=$1 AND ${activeScheduleStageWhere('c')}
-      AND ($2='%%' OR c.nome ILIKE $2 OR c.descricao ILIKE $2 OR EXISTS (
-        SELECT 1 FROM cronogramas f WHERE f.parent_id=c.id AND f.excluido_em IS NULL AND (f.nome ILIKE $2 OR f.descricao ILIKE $2)))
-    ORDER BY ${activeScheduleStageOrder('c')}`, [projectId, `%${search}%`, SETTLED_PAYMENT_STATUSES])
-  const parents = rows.filter((row) => row.parent_id === null)
-  const tree = parents.map((parent) => ({ ...parent, subitens: rows.filter((row) => Number(row.parent_id) === Number(parent.id)) }))
-  res.json({ etapas: rows, opcoes: rows, registros: rows, arvore: tree, pagina: 1, porPagina: rows.length, total: parents.length, totalRegistros: rows.length })
+  const data=await getSchedule(projectId)
+  res.json(data)
 })
 
-stagesRouter.get('/relatorio.pdf', requireProjectPermission('etapas.exportar'), async (req,res)=>{const report=await getScheduleReport(req.acessoProjeto!.projetoId);const document=createSchedulePdf(report);res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition',`inline; filename="cronograma-${req.acessoProjeto!.projetoId}.pdf"`);document.pipe(res);document.end()})
-stagesRouter.get('/relatorio.xlsx', requireProjectPermission('etapas.exportar'), async (req,res)=>{const report=await getScheduleReport(req.acessoProjeto!.projetoId);const content=await createScheduleWorkbook(report);res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('Content-Disposition',`attachment; filename="cronograma-${req.acessoProjeto!.projetoId}.xlsx"`);res.send(Buffer.from(content))})
+stagesRouter.get('/relatorio.pdf', requireProjectPermission('etapas.exportar'), async (req,res)=>{const report=await getScheduleReport(req.acessoProjeto!.projetoId,{planned:req.query.previsto!=='false',sort:String(req.query.ordem||'ordem'),direction:String(req.query.direcao||'asc')});const document=createSchedulePdf(report);res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition',`inline; filename="cronograma-${req.acessoProjeto!.projetoId}.pdf"`);document.pipe(res);document.end()})
+stagesRouter.get('/relatorio.xlsx', requireProjectPermission('etapas.exportar'), async (req,res)=>{const report=await getScheduleReport(req.acessoProjeto!.projetoId,{planned:req.query.previsto!=='false',sort:String(req.query.ordem||'ordem'),direction:String(req.query.direcao||'asc')});const content=await createScheduleWorkbook(report);res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('Content-Disposition',`attachment; filename="cronograma-${req.acessoProjeto!.projetoId}.xlsx"`);res.send(Buffer.from(content))})
 
 stagesRouter.post('/', requireProjectPermission('etapas.inserir'), validateBody(scheduleSchema), async (req, res) => {
   await ensureParent(req.acessoProjeto!.projetoId, req.body.parent_id)
@@ -187,6 +150,8 @@ stagesRouter.delete('/:itemId', requireProjectPermission('etapas.excluir'), asyn
   res.status(204).end()
 })
 
+stagesRouter.get('/importacao/modelo', requireProjectPermission('etapas.inserir'), (req,res)=>{const format=z.enum(['TSV','JSON']).parse(req.query.formato||'JSON');res.type(format==='JSON'?'application/json':'text/tab-separated-values').attachment(`cronograma.${format.toLowerCase()}`).send(importExample('cronograma',format))})
+
 stagesRouter.post('/importacao/preview', requireProjectPermission('etapas.inserir'), validateBody(importSchema), async (req, res) => res.json(parseSchedule(req.body.formato, req.body.conteudo)))
 
 stagesRouter.post('/importacao/confirmar', requireProjectPermission('etapas.inserir'), validateBody(importSchema.required({ modo: true })), async (req, res) => {
@@ -194,21 +159,28 @@ stagesRouter.post('/importacao/confirmar', requireProjectPermission('etapas.inse
   if (parsed.erros.length) throw new AppError(422, 'A importação possui erros e não foi aplicada.', 'IMPORTACAO_INVALIDA', parsed.erros)
   const importId = await withTransaction(async (client) => {
     const projectId = req.acessoProjeto!.projetoId
+    if(req.body.modo==='SUBSTITUIR'){
+      if(!req.acessoProjeto!.permissoes.has('etapas.excluir')&&!req.acessoProjeto!.proprietario&&!req.acessoProjeto!.administradorSistema)throw new AppError(403,'A substituição exige permissão para excluir etapas.','ACESSO_NEGADO')
+      const linked=await client.query('SELECT 1 FROM despesas WHERE projeto_id=$1 AND etapa_id IS NOT NULL AND excluido_em IS NULL UNION ALL SELECT 1 FROM pagamentos WHERE projeto_id=$1 AND compra_id IS NULL AND etapa_id IS NOT NULL AND excluido_em IS NULL LIMIT 1',[projectId])
+      if(linked.rowCount)throw new AppError(422,'Há despesas vinculadas ao cronograma. Utilize Acrescentar para preservar seus relacionamentos.','CRONOGRAMA_VINCULADO')
+    }
     if (req.body.modo === 'SUBSTITUIR') await client.query('UPDATE cronogramas SET excluido_em=NOW() WHERE projeto_id=$1 AND excluido_em IS NULL', [projectId])
     const existing = await client.query<{ id: number; nome: string; ordem: number }>('SELECT id,nome,ordem FROM cronogramas WHERE projeto_id=$1 AND parent_id IS NULL AND excluido_em IS NULL', [projectId])
     const parents = new Map<string, number>()
-    existing.rows.forEach((row) => { parents.set(row.nome.trim().toLowerCase(), row.id); parents.set(String(row.ordem), row.id) })
+    existing.rows.forEach((row) => {const name=row.nome.trim().toLowerCase();parents.set(name,parents.has(name)?-1:row.id)})
     for (const row of parsed.registros.filter((item) => item.tipo === 'ETAPA')) {
-      const result = await client.query<{ id: number }>(`INSERT INTO cronogramas (projeto_id,parent_id,nome,descricao,data_inicio_previsto,data_fim_previsto,data_inicio,data_fim,valor_previsto,valor_executado,ordem,criado_por)
-        VALUES ($1,NULL,$2,$3,$4,$5,$6,$7,$8,0,$9,$10) RETURNING id`, [projectId,row.nome,row.descricao,row.data_inicio_previsto,row.data_fim_previsto,row.data_inicio,row.data_fim,row.valor_previsto,row.ordem,req.usuarioId])
+      const result = await client.query<{ id: number }>(`INSERT INTO cronogramas (projeto_id,parent_id,nome,descricao,data_inicio_previsto,data_fim_previsto,data_inicio,data_fim,valor_previsto,valor_executado,ordem,criado_por,cor)
+        VALUES ($1,NULL,$2,$3,$4,$5,$6,$7,$8,0,$9,$10,$11) RETURNING id`, [projectId,row.nome,row.descricao,row.data_inicio_previsto,row.data_fim_previsto,row.data_inicio,row.data_fim,row.valor_previsto,row.ordem,req.usuarioId,row.cor])
       const id = result.rows[0]!.id
-      parents.set(row.nome.trim().toLowerCase(), id); parents.set(String(row.ordem), id)
+      parents.set(row.nome.trim().toLowerCase(), id)
     }
     for (const row of parsed.registros.filter((item) => item.tipo === 'SUBITEM')) {
-      const parentId = parents.get(row.etapa_pai!.toLowerCase()) ?? parents.get(row.etapa_pai!)
-      if (!parentId) throw new AppError(422, `Etapa pai não encontrada: ${row.etapa_pai}.`, 'ETAPA_PAI_NAO_ENCONTRADA')
-      await client.query(`INSERT INTO cronogramas (projeto_id,parent_id,nome,descricao,data_inicio_previsto,data_fim_previsto,data_inicio,data_fim,valor_previsto,valor_executado,ordem,criado_por)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11)`, [projectId,parentId,row.nome,row.descricao,row.data_inicio_previsto,row.data_fim_previsto,row.data_inicio,row.data_fim,row.valor_previsto,row.ordem,req.usuarioId])
+      const parentId = parents.get(row.etapa_pai!.toLowerCase())
+      if (!parentId || parentId < 0) throw new AppError(422, `Etapa pai não encontrada: ${row.etapa_pai}.`, 'ETAPA_PAI_NAO_ENCONTRADA')
+      const budget=await client.query<{total:string;limite:string}>(`SELECT COALESCE((SELECT SUM(valor_previsto) FROM cronogramas WHERE parent_id=$1 AND excluido_em IS NULL),0) AS total,(SELECT valor_previsto FROM cronogramas WHERE id=$1) AS limite`,[parentId])
+      if(Number(budget.rows[0]!.total)+row.valor_previsto>Number(budget.rows[0]!.limite))throw new AppError(422,`O orçamento dos subitens ultrapassa a etapa ${row.etapa_pai}.`,'ORCAMENTO_SUBITENS_EXCEDE_PAI')
+      await client.query(`INSERT INTO cronogramas (projeto_id,parent_id,nome,descricao,data_inicio_previsto,data_fim_previsto,data_inicio,data_fim,valor_previsto,valor_executado,ordem,criado_por,cor)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11,$12)`, [projectId,parentId,row.nome,row.descricao,row.data_inicio_previsto,row.data_fim_previsto,row.data_inicio,row.data_fim,row.valor_previsto,row.ordem,req.usuarioId,row.cor])
     }
     const { rows } = await client.query<{ id: number }>(`INSERT INTO importacoes
       (projeto_id,entidade,formato,modo,nome_arquivo,hash_arquivo,quantidade_linhas,status,criado_por,concluido_em)

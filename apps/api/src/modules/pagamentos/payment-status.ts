@@ -25,6 +25,14 @@ export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = Object.fromE
   PAYMENT_STATUSES.map((status) => [status.value, status.label]),
 ) as Record<PaymentStatus, string>
 
+// Shared with the status rows in the Despesas CRUD.
+export const PAYMENT_STATUS_COLORS: Record<PaymentStatus, string> = {
+  PENDENTE: '#9a5142',
+  EM_NEGOCIACAO: '#b47b24',
+  PAGO_AGUARDANDO_ENTREGA: '#4f7659',
+  CONCLUIDO: '#48647a',
+}
+
 export const SETTLED_PAYMENT_STATUSES: PaymentStatus[] = [PAYMENT_STATUS.PAGO_AGUARDANDO_ENTREGA, PAYMENT_STATUS.CONCLUIDO]
 
 export function normalizePaymentStatus(value: unknown): string {

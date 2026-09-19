@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import PDFDocument from 'pdfkit'
+import { getCashFlowReport, createCashFlowPdf } from '../relatorios/planning-report.service.js'
 import { query } from '../../config/database.js'
 import { requireAuth } from '../../shared/auth.js'
 import { AppError } from '../../shared/errors.js'
@@ -13,7 +13,7 @@ dashboardRouter.use(requireAuth)
 
 dashboardRouter.get('/', requireProjectPermission('visao_geral.visualizar'), async (req, res) => {
   const projectId = req.acessoProjeto!.projetoId
-  const [project, metrics, evolution, distribution, recentPayments, nextStages, recentDocuments, activity] = await Promise.all([
+  const [project, metrics, evolution, distribution, suppliers, recentPayments, nextStages, recentDocuments, activity] = await Promise.all([
     query(`SELECT p.id,p.nome,p.descricao,p.data_inicio,p.previsao_termino,
       p.area_construida,p.area_com_laje,p.area_sem_laje,p.cidade,p.estado,p.bairro,p.logradouro,p.numero,p.latitude,p.longitude,
       p.processo_aprovacao,p.pasta_digital,p.planta_numero,p.alvara,p.art,p.cno_obra,p.matricula_terreno,
@@ -50,6 +50,10 @@ dashboardRouter.get('/', requireProjectPermission('visao_geral.visualizar'), asy
       LEFT JOIN cronogramas e ON e.id=p.etapa_id LEFT JOIN cronogramas pai ON pai.id=e.parent_id
       WHERE p.projeto_id=$1 AND p.status=ANY($2::varchar[])
       GROUP BY COALESCE('ETAPA ' || COALESCE(pai.ordem,e.ordem)::text || ' - ' || COALESCE(pai.nome,e.nome),'Sem etapa') ORDER BY total DESC`, [projectId,SETTLED_PAYMENT_STATUSES]),
+    query(`WITH ${paymentFinancialCte} SELECT COALESCE(NULLIF(TRIM(p.fornecedor),''),'Não informado') AS fornecedor,
+      COALESCE(SUM(p.valor),0)::numeric(15,2) AS total FROM pagamentos_financeiros p
+      WHERE p.projeto_id=$1 AND p.status=ANY($2::varchar[])
+      GROUP BY COALESCE(NULLIF(TRIM(p.fornecedor),''),'Não informado') ORDER BY total DESC LIMIT 10`, [projectId,SETTLED_PAYMENT_STATUSES]),
     query(`WITH ${paymentFinancialCte} SELECT p.id,p.descricao,p.fornecedor,p.descricao AS item,p.valor,p.forma_pagamento,p.data_pagamento
       FROM pagamentos_financeiros p WHERE p.projeto_id=$1 AND p.status=ANY($2::varchar[])
       ORDER BY p.data_pagamento DESC,p.id DESC LIMIT 6`, [projectId,SETTLED_PAYMENT_STATUSES]),
@@ -62,7 +66,7 @@ dashboardRouter.get('/', requireProjectPermission('visao_geral.visualizar'), asy
       WHERE ra.projeto_id=$1 ORDER BY ra.criado_em DESC LIMIT 8`, [projectId]),
   ])
   if (!project.rows[0]) throw new AppError(404, 'Projeto não encontrado.', 'PROJETO_NAO_ENCONTRADO')
-  res.json({ projeto: project.rows[0], indicadores: metrics.rows[0], evolucaoFinanceira: evolution.rows, distribuicaoEtapas: distribution.rows, ultimosPagamentos: recentPayments.rows, proximasEtapas: nextStages.rows, documentosRecentes: recentDocuments.rows, atividadesRecentes: activity.rows })
+  res.json({ projeto: project.rows[0], indicadores: metrics.rows[0], evolucaoFinanceira: evolution.rows, distribuicaoEtapas: distribution.rows, fornecedores: suppliers.rows, ultimosPagamentos: recentPayments.rows, proximasEtapas: nextStages.rows, documentosRecentes: recentDocuments.rows, atividadesRecentes: activity.rows })
 })
 
 dashboardRouter.get('/imagem-apresentacao', requireProjectPermission('visao_geral.visualizar'), async (req, res) => {
@@ -114,29 +118,12 @@ dashboardRouter.get('/relatorio.pdf', requireProjectPermission('pagamentos.expor
   const projectId = req.acessoProjeto!.projetoId
   const competence = String(req.query.competencia || new Date().toISOString().slice(0, 7))
   if (!/^\d{4}-\d{2}$/.test(competence)) throw new AppError(422, 'Competência inválida.', 'COMPETENCIA_INVALIDA')
-  const [project, values] = await Promise.all([
-    query<{ nome: string; cidade: string | null; estado: string | null }>('SELECT nome,cidade,estado FROM projetos WHERE id=$1 AND excluido_em IS NULL', [projectId]),
-    query(`WITH ${paymentFinancialCte} SELECT COALESCE(SUM(io.valor),0)::numeric(15,2) AS previsto,
-      COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1 AND status=ANY($3::varchar[]) AND DATE_TRUNC('month',data_pagamento)=$2::date),0)::numeric(15,2) AS pago
-      FROM itens_orcamento io WHERE io.projeto_id=$1 AND io.excluido_em IS NULL AND io.competencia=$2::date`, [projectId,`${competence}-01`,SETTLED_PAYMENT_STATUSES]),
-  ])
-  if (!project.rows[0]) throw new AppError(404, 'Projeto não encontrado.', 'PROJETO_NAO_ENCONTRADO')
-  const document = new PDFDocument({ size: 'A4', margin: 54, info: { Title: `Relatório ${project.rows[0].nome}` } })
-  res.setHeader('Content-Type', 'application/pdf')
-  res.setHeader('Content-Disposition', `attachment; filename="relatorio-${competence}.pdf"`)
+  const start = `${competence}-01`
+  const end = new Date(Date.UTC(Number(competence.slice(0,4)),Number(competence.slice(5)),0)).toISOString().slice(0,10)
+  const report = await getCashFlowReport(projectId,{search:'',start,end,includeFuture:true})
+  const document = createCashFlowPdf(report)
+  res.setHeader('Content-Type','application/pdf')
+  res.setHeader('Content-Disposition',`inline; filename="relatorio-${competence}.pdf"`)
   document.pipe(res)
-  document.rect(0, 0, 595, 842).fill('#f7f5ef')
-  document.fillColor('#1f2421').font('Helvetica-Bold').fontSize(11).text('MINHAOBRA', 54, 50)
-  document.fillColor('#8b7358').fontSize(9).text('RELATÓRIO FINANCEIRO MENSAL', 54, 78)
-  document.fillColor('#1f2421').font('Helvetica-Bold').fontSize(28).text(project.rows[0].nome, 54, 110)
-  document.fillColor('#6b716d').font('Helvetica').fontSize(10).text(`${project.rows[0].cidade || ''}${project.rows[0].estado ? ` · ${project.rows[0].estado}` : ''}  |  Competência ${competence.split('-').reverse().join('/')}  |  Emitido em ${new Intl.DateTimeFormat('pt-BR').format(new Date())}`, 54, 151)
-  const metric = values.rows[0] as { previsto: string; pago: string }
-  const money = (value: string) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(value))
-  document.roundedRect(54, 190, 230, 105, 3).fill('#ffffff').fillColor('#757b77').fontSize(9).text('FLUXO PREVISTO', 72, 213).fillColor('#1f2421').font('Helvetica-Bold').fontSize(20).text(money(metric.previsto), 72, 242)
-  document.roundedRect(310, 190, 230, 105, 3).fill('#ffffff').fillColor('#757b77').font('Helvetica').fontSize(9).text('VALOR PAGO', 328, 213).fillColor('#1f2421').font('Helvetica-Bold').fontSize(20).text(money(metric.pago), 328, 242)
-  document.fillColor('#1f2421').font('Helvetica-Bold').fontSize(16).text('Resumo', 54, 345)
-  document.fillColor('#59605c').font('Helvetica').fontSize(11).text(`No período, os pagamentos confirmados representam ${Number(metric.previsto) ? ((Number(metric.pago)/Number(metric.previsto))*100).toFixed(1) : '0,0'}% do fluxo mensal previsto. Este relatório foi gerado a partir dos registros atuais do projeto.`, 54, 378, { width: 486, lineGap: 6 })
-  document.moveTo(54, 470).lineTo(540, 470).strokeColor('#d8d5ce').stroke()
-  document.fillColor('#8b7358').fontSize(9).text('Documento gerado pelo MinhaObra', 54, 490)
   document.end()
 })

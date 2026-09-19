@@ -6,15 +6,17 @@ import { env } from '../../config/env.js'
 import { requireAuth } from '../../shared/auth.js'
 import { recordAudit } from '../../shared/audit.js'
 import { AppError } from '../../shared/errors.js'
-import { parseImportContent } from '../../shared/importParser.js'
+import { importExample } from '../../shared/import-examples.js'
+import { parseExpenseImport, applyExpenseImport } from '../despesas/expense-import.service.js'
+import { expenseItemTotalSql as itemTotalSql } from '../despesas/expense-financial.js'
 import { requireProjectPermission } from '../../shared/projectAccess.js'
 import { readStoredFile, removeStoredFile, safeDownloadName, saveUploadedFile } from '../../shared/storage.js'
 import { identifyStore, validateHttpUrl } from '../../shared/url.js'
 import { validateBody } from '../../shared/validation.js'
 import { assignDocumentCategoryByName } from '../arquivos/document-categories.js'
-import { activeScheduleStageOrder, activeScheduleStageWhere } from '../etapas/stage-query.js'
-import { createPaymentPdf, createPaymentWorkbook, getPaymentReport } from './payment-report.service.js'
-import { normalizePaymentStatus, PAYMENT_STATUS, PAYMENT_STATUS_VALUES, type PaymentStatus } from './payment-status.js'
+import { getSchedule } from '../etapas/schedule.service.js'
+import { createExpensePdf, createExpenseWorkbook, getExpenseCrudData, getExpenseReport } from '../despesas/expense-report.service.js'
+import { PAYMENT_STATUS, PAYMENT_STATUS_VALUES, type PaymentStatus } from './payment-status.js'
 import { linkSchema, moveItemSchema, moveItemsSchema, paymentSchema, paymentStatusSchema, purchaseItemSchema, purchaseSchema } from './payment.schemas.js'
 
 const paymentImportSchema = z.object({
@@ -32,21 +34,6 @@ async function ensureStage(projectId: number, stageId?: number | null) {
   if (!stageId) return
   const { rowCount } = await query('SELECT 1 FROM cronogramas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL', [stageId, projectId])
   if (!rowCount) throw new AppError(422, 'A etapa não pertence ao projeto.', 'ETAPA_INVALIDA')
-}
-
-async function resolveStage(projectId: number, value: unknown): Promise<number | null> {
-  if (value === null || value === undefined || value === '') return null
-  if (Number.isInteger(Number(value))) {
-    const { rows } = await query<{ id: number }>('SELECT id FROM cronogramas WHERE (id=$1 OR ordem=$1) AND projeto_id=$2 AND excluido_em IS NULL ORDER BY parent_id IS NOT NULL DESC,id=$1 DESC LIMIT 1', [Number(value), projectId])
-    return rows[0]?.id ?? null
-  }
-  const { rows } = await query<{ id: number }>('SELECT id FROM cronogramas WHERE projeto_id=$1 AND LOWER(nome)=LOWER($2) AND excluido_em IS NULL ORDER BY parent_id IS NOT NULL DESC LIMIT 1', [projectId, String(value).trim()])
-  return rows[0]?.id ?? null
-}
-
-function splitPipe(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean)
-  return typeof value === 'string' ? value.split('|').map((item) => item.trim()).filter(Boolean) : []
 }
 
 async function syncPaymentLinks(client: { query: (sql: string, values?: unknown[]) => Promise<unknown> }, paymentId: number, links: string[], userId: number) {
@@ -93,31 +80,24 @@ paymentsRouter.get('/', requireProjectPermission('pagamentos.visualizar'), async
 
 paymentsRouter.get('/relatorio.pdf', requireProjectPermission('pagamentos.exportar'), async (req, res) => {
   const projectId = req.acessoProjeto!.projetoId
-  const document = createPaymentPdf(projectId, await getPaymentReport(projectId))
+  const document = createExpensePdf(projectId, await getExpenseReport(projectId,{status:String(req.query.status||''),search:String(req.query.busca||''),stageId:req.query.etapaId?z.coerce.number().int().positive().parse(req.query.etapaId):null}))
   res.setHeader('Content-Type', 'application/pdf')
-  res.setHeader('Content-Disposition', `attachment; filename="despesas-${projectId}.pdf"`)
+  res.setHeader('Content-Disposition', `inline; filename="despesas-${projectId}.pdf"`)
   document.pipe(res)
   document.end()
 })
 
 paymentsRouter.get('/relatorio.xlsx', requireProjectPermission('pagamentos.exportar'), async (req, res) => {
   const projectId = req.acessoProjeto!.projetoId
-  const content = await createPaymentWorkbook(projectId, await getPaymentReport(projectId))
+  const content = await createExpenseWorkbook(projectId, await getExpenseReport(projectId,{status:String(req.query.status||''),search:String(req.query.busca||''),stageId:req.query.etapaId?z.coerce.number().int().positive().parse(req.query.etapaId):null}))
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
   res.setHeader('Content-Disposition', `attachment; filename="despesas-${projectId}.xlsx"`)
   res.send(Buffer.from(content))
 })
 
 paymentsRouter.get('/etapas', requireProjectPermission('pagamentos.visualizar'), async (req, res) => {
-  const { rows } = await query(`SELECT id,parent_id,nome,ordem,cor FROM cronogramas
-    WHERE projeto_id=$1 AND parent_id IS NULL AND ${activeScheduleStageWhere('cronogramas')}
-    ORDER BY ${activeScheduleStageOrder('cronogramas')}`, [req.acessoProjeto!.projetoId])
-  res.json({ etapas: rows })
+  res.json(await getSchedule(req.acessoProjeto!.projetoId))
 })
-
-const itemTotalSql = (alias: string) => `CASE WHEN ${alias}.valor_total_manual THEN ${alias}.valor
-  WHEN ${alias}.valor_unitario IS NULL THEN ${alias}.valor
-  ELSE ROUND((COALESCE(${alias}.quantidade,1) * ${alias}.valor_unitario) - COALESCE(${alias}.valor_desconto,0),2) END`
 
 paymentsRouter.get('/fornecedores', requireProjectPermission('pagamentos.visualizar'), async (req, res) => {
   const { rows } = await query(`SELECT fornecedor,MAX(nome_contato_fornecedor) AS nome_contato_fornecedor,
@@ -132,6 +112,14 @@ paymentsRouter.get('/fornecedores', requireProjectPermission('pagamentos.visuali
 })
 
 paymentsRouter.get('/despesas', requireProjectPermission('pagamentos.visualizar'), async (req, res) => {
+  const status=String(req.query.status||'')
+  const search=String(req.query.busca||'').trim()
+  const stageId=Number.isSafeInteger(Number(req.query.etapaId))&&Number(req.query.etapaId)>0?Number(req.query.etapaId):null
+  res.json(await getExpenseCrudData(req.acessoProjeto!.projetoId,{status,search,stageId}))
+})
+
+// Kept temporarily for API consumers migrating from the former raw-query shape.
+paymentsRouter.get('/despesas-legado', requireProjectPermission('pagamentos.visualizar'), async (req, res) => {
   const projectId = req.acessoProjeto!.projetoId
   const status = String(req.query.status || '')
   if (status && !PAYMENT_STATUS_VALUES.includes(status as PaymentStatus)) throw new AppError(422, 'Status de compra inválido.', 'STATUS_INVALIDO')
@@ -337,65 +325,26 @@ paymentsRouter.delete('/:pagamentoId/links/:linkId', requireProjectPermission('p
   res.status(204).end()
 })
 
-async function parsePayments(projectId: number, format: 'TSV' | 'JSON', content: string) {
-  const raw = parseImportContent(format, content)
-  const valid: z.infer<typeof paymentSchema>[] = []
-  const errors: { linha: number; erros: string[] }[] = []
-  for (let index = 0; index < raw.length; index += 1) {
-    const source = raw[index] as Record<string, unknown>
-    const links = source?.links_cotacao ?? source?.links_de_cotacao ?? source?.cotacoes
-    const documents = source?.documentos ?? source?.documentos_relacionados
-    const details = source?.subitens ?? source?.detalhes
-    const detailText = Array.isArray(details) ? details.map((detail) => {
-      if (!detail || typeof detail !== 'object') return String(detail)
-      const item = detail as Record<string, unknown>
-      return [item.descricao, item.quantidade, item.unidade, item.valor].filter((value) => value !== null && value !== undefined && value !== '').join(' | ')
-    }).filter(Boolean).join('\n') : ''
-    const normalized = {
-      etapa_id: await resolveStage(projectId, source?.etapa_id ?? source?.etapa),
-      quantidade: source?.quantidade ?? source?.qtde ?? null,
-      unidade: source?.unidade ?? null,
-      descricao: source?.descricao ?? source?.item,
-      fornecedor: source?.fornecedor ?? null,
-      contato_fornecedor: source?.contato_fornecedor ?? source?.contato ?? null,
-      nome_contato_fornecedor: source?.nome_contato_fornecedor ?? source?.nome_funcionario ?? null,
-      chave_pix: source?.chave_pix ?? source?.pix ?? null,
-      valor: source?.valor,
-      status: normalizePaymentStatus(source?.status),
-      forma_pagamento: String(source?.forma_pagamento ?? source?.forma_de_pagto ?? '').trim().toUpperCase() || null,
-      data_pagamento: source?.data_pagamento ?? source?.data ?? null,
-      data_agendamento: source?.data_agendamento ?? null,
-      data_entrega: source?.data_entrega ?? null,
-      observacao: [source?.observacao ?? source?.observacoes, detailText].filter(Boolean).join('\n') || null,
-      ordem: source?.ordem ?? index + 1,
-      links_cotacao: splitPipe(links),
-      documentos: splitPipe(documents),
-    }
-    const result = paymentSchema.safeParse(normalized)
-    if (result.success) valid.push(result.data)
-    else errors.push({ linha: index + 2, erros: result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`) })
-  }
-  return { registros: valid, erros: errors, total: raw.length }
-}
-
-paymentsRouter.post('/importacao/preview', requireProjectPermission('pagamentos.inserir'), validateBody(paymentImportSchema), async (req, res) => {
-  res.json(await parsePayments(req.acessoProjeto!.projetoId, req.body.formato, req.body.conteudo))
+paymentsRouter.get('/importacao/modelo', requireProjectPermission('pagamentos.inserir'), (req,res)=>{
+  const format=z.enum(['TSV','JSON']).parse(req.query.formato||'JSON')
+  res.type(format==='JSON'?'application/json':'text/tab-separated-values').attachment(`despesas.${format.toLowerCase()}`).send(importExample('despesas',format))
 })
 
-paymentsRouter.post('/importacao/confirmar', requireProjectPermission('pagamentos.inserir'), validateBody(paymentImportSchema.required({ modo: true })), async (req, res) => {
-  const parsed = await parsePayments(req.acessoProjeto!.projetoId, req.body.formato, req.body.conteudo)
-  if (parsed.erros.length) throw new AppError(422, 'A importação possui erros e não foi aplicada.', 'IMPORTACAO_INVALIDA', parsed.erros)
-  await withTransaction(async (client) => {
-    if (req.body.modo === 'SUBSTITUIR') await client.query('UPDATE pagamentos SET excluido_em=NOW() WHERE projeto_id=$1 AND compra_id IS NULL AND excluido_em IS NULL', [req.acessoProjeto!.projetoId])
-    for (const row of parsed.registros) {
-      const { rows } = await client.query<{ id: number }>(`INSERT INTO pagamentos
-        (projeto_id,etapa_id,quantidade,unidade,descricao,fornecedor,contato_fornecedor,nome_contato_fornecedor,chave_pix,valor,status,forma_pagamento,data_pagamento,data_agendamento,data_entrega,observacao,ordem,criado_por)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`, [req.acessoProjeto!.projetoId,row.etapa_id,row.quantidade,row.unidade,row.descricao,row.fornecedor,row.contato_fornecedor,row.nome_contato_fornecedor,row.chave_pix,row.valor,row.status,row.forma_pagamento,row.data_pagamento,row.data_agendamento,row.data_entrega,row.observacao,row.ordem,req.usuarioId])
-      const paymentId = rows[0]!.id
-      await syncPaymentLinks(client, paymentId, row.links_cotacao ?? [], req.usuarioId!)
-    }
+paymentsRouter.post('/importacao/preview', requireProjectPermission('pagamentos.inserir'), validateBody(paymentImportSchema), async(req,res)=>{
+  res.json(parseExpenseImport(req.body.formato,req.body.conteudo))
+})
+
+paymentsRouter.post('/importacao/confirmar', requireProjectPermission('pagamentos.inserir'), validateBody(paymentImportSchema.required({modo:true})), async(req,res)=>{
+  const parsed=parseExpenseImport(req.body.formato,req.body.conteudo)
+  if(parsed.erros.length)throw new AppError(422,'Corrija os campos indicados antes de importar.','IMPORTACAO_INVALIDA',parsed.erros)
+  if(parsed.registros.some(row=>row.tipo==='DOCUMENTO')&&!req.acessoProjeto!.proprietario&&!req.acessoProjeto!.administradorSistema&&!req.acessoProjeto!.permissoes.has('documentos.inserir'))throw new AppError(403,'Você não possui permissão para importar documentos.','ACESSO_NEGADO')
+  if(req.body.modo==='SUBSTITUIR'&&!req.acessoProjeto!.proprietario&&!req.acessoProjeto!.administradorSistema&&(!req.acessoProjeto!.permissoes.has('pagamentos.excluir')||!req.acessoProjeto!.permissoes.has('documentos.excluir')))throw new AppError(403,'A substituição exige permissão para excluir despesas e documentos.','ACESSO_NEGADO')
+  const counts=await withTransaction(async client=>{
+    const counts=await applyExpenseImport(client,req.acessoProjeto!.projetoId,req.usuarioId!,parsed.registros,req.body.modo)
+    await recordAudit(client,{projetoId:req.acessoProjeto!.projetoId,usuarioId:req.usuarioId!,acao:'DESPESAS_IMPORTADAS',entidade:'despesas',dadosNovos:counts,enderecoIp:req.ip})
+    return counts
   })
-  res.status(201).json({ quantidade: parsed.total })
+  res.status(201).json({quantidade:parsed.total,...counts})
 })
 
 paymentsRouter.get('/despesas/:compraId/documentos', requireProjectPermission('documentos.visualizar'), async(req,res)=>{
