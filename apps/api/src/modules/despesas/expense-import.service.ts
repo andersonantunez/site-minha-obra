@@ -3,14 +3,14 @@ import type { PoolClient } from 'pg'
 import { parseImportContent, type ImportFormat } from '../../shared/importParser.js'
 import { AppError } from '../../shared/errors.js'
 import { purchaseSchema, purchaseItemSchema } from '../pagamentos/payment.schemas.js'
-import { PAYMENT_STATUSES } from '../pagamentos/payment-status.js'
+import { PAYMENT_STATUSES, SETTLED_PAYMENT_STATUSES } from '../pagamentos/payment-status.js'
 import { activeScheduleStageWhere } from '../etapas/stage-query.js'
 import { assignDocumentCategoryByName } from '../arquivos/document-categories.js'
 
 const reference=z.string().trim().min(1).max(120)
 const expenseRow=z.object({...purchaseSchema.shape,tipo:z.literal('DESPESA'),referencia:reference,etapa:z.string().trim().nullable().optional()})
   .omit({etapa_id:true,ordem:true}).strict().superRefine((row,context)=>{
-    if(row.status==='PAGO_AGUARDANDO_ENTREGA'&&!row.data_pagamento)context.addIssue({code:'custom',path:['data_pagamento'],message:'Informe a data do pagamento para uma despesa paga.'})
+    if(SETTLED_PAYMENT_STATUSES.includes(row.status)&&!row.data_pagamento)context.addIssue({code:'custom',path:['data_pagamento'],message:'Informe a data do pagamento para uma despesa paga ou concluída.'})
   })
 const itemRow=z.object({...purchaseItemSchema.shape,tipo:z.literal('ITEM'),referencia:reference,despesa_ref:reference})
   .omit({ordem:true}).strict()

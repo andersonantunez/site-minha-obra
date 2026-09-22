@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { parseBrazilianNumber } from '../../shared/importParser.js'
-import { PAYMENT_STATUS_VALUES } from './payment-status.js'
+import { PAYMENT_STATUS_VALUES, SETTLED_PAYMENT_STATUSES } from './payment-status.js'
 
 function normalizeDate(value: unknown) {
   if (typeof value !== 'string') return value
@@ -48,7 +48,7 @@ export const purchaseSchema = z.object({
   data_entrega: optionalDate,
   ordem: z.coerce.number().int().min(0).max(999_999).default(0),
 }).superRefine((value, context) => {
-  if (value.status === 'PAGO_AGUARDANDO_ENTREGA' && !value.data_pagamento) context.addIssue({ code: 'custom', path: ['data_pagamento'], message: 'A data do pagamento é obrigatória para o status Pago - Aguardando Entrega.' })
+  if (SETTLED_PAYMENT_STATUSES.includes(value.status) && !value.data_pagamento) context.addIssue({ code: 'custom', path: ['data_pagamento'], message: 'A data do pagamento é obrigatória para os status Pago - Aguardando Entrega e Concluído.' })
 })
 
 export const purchaseItemSchema = z.object({

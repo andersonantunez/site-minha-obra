@@ -204,7 +204,7 @@ paymentsRouter.patch('/despesas/:compraId/status', requireProjectPermission('pag
   const projectId=req.acessoProjeto!.projetoId;const purchaseId=Number(req.params.compraId)
   const purchase=await query<{data_pagamento:string|null}>('SELECT data_pagamento FROM despesas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL',[purchaseId,projectId])
   if(!purchase.rows[0])throw new AppError(404,'Compra não encontrada.','COMPRA_NAO_ENCONTRADA')
-  if(req.body.status===PAYMENT_STATUS.PAGO_AGUARDANDO_ENTREGA&&!purchase.rows[0].data_pagamento)throw new AppError(422,'Informe a data do pagamento antes de alterar para Pago - Aguardando Entrega.','DATA_PAGAMENTO_OBRIGATORIA')
+  if([PAYMENT_STATUS.PAGO_AGUARDANDO_ENTREGA,PAYMENT_STATUS.CONCLUIDO].includes(req.body.status)&&!purchase.rows[0].data_pagamento)throw new AppError(422,'Informe a data do pagamento antes de alterar para Pago - Aguardando Entrega ou Concluído.','DATA_PAGAMENTO_OBRIGATORIA')
   await query('UPDATE despesas SET status=$3 WHERE id=$1 AND projeto_id=$2',[purchaseId,projectId,req.body.status])
   res.status(204).end()
 })
