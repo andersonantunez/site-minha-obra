@@ -2,7 +2,7 @@ import type { ImportFormat } from './importParser.js'
 
 export const importExamples = {
   despesas: [
-    {tipo:'DESPESA',referencia:'despesa-1',descricao:'Materiais para alvenaria',status:'PENDENTE',fornecedor:'Fornecedor exemplo',observacao:'Entrega no endereço da obra',valor_desconto:25,numero_nota_fiscal:'NF-123',data_emissao:'2026-09-10'},
+    {tipo:'DESPESA',referencia:'despesa-1',descricao:'Materiais para alvenaria',status:'PENDENTE',categoria:'MATERIAL_CONSTRUCAO',fornecedor:'Fornecedor exemplo',observacao:'Entrega no endereço da obra',valor_desconto:25,numero_nota_fiscal:'NF-123',data_emissao:'2026-09-10'},
     {tipo:'ITEM',referencia:'item-1',despesa_ref:'despesa-1',descricao:'Tijolos',quantidade:3000,unidade:'Unidades',valor_unitario:1.8333,valor_desconto:0,valor_total:5500,links_cotacao:['https://fornecedor.example/cotacao/tijolos']},
     {tipo:'ITEM',referencia:'item-2',despesa_ref:'despesa-1',descricao:'Frete',quantidade:null,unidade:null,valor_unitario:150,valor_desconto:10,valor_total:null,links_cotacao:[]},
     {tipo:'DOCUMENTO',despesa_ref:'despesa-1',titulo:'Nota Fiscal 123',url:'https://fornecedor.example/documentos/nf-123',categorias:['Despesas','Financiamento']},
@@ -25,4 +25,3 @@ export function importExample(entity:keyof typeof importExamples, format:ImportF
   const serialize=(value:unknown)=>value===null||value===undefined?'':Array.isArray(value)||typeof value==='object'?JSON.stringify(value):String(value)
   return [fields.join('\t'),...rows.map(row=>fields.map(field=>serialize((row as Record<string,unknown>)[field])).join('\t'))].join('\n')+'\n'
 }
-

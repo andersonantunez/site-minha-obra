@@ -80,7 +80,7 @@ paymentsRouter.get('/', requireProjectPermission('pagamentos.visualizar'), async
 
 paymentsRouter.get('/relatorio.pdf', requireProjectPermission('pagamentos.exportar'), async (req, res) => {
   const projectId = req.acessoProjeto!.projetoId
-  const document = createExpensePdf(projectId, await getExpenseReport(projectId,{status:String(req.query.status||''),search:String(req.query.busca||''),stageId:req.query.etapaId?z.coerce.number().int().positive().parse(req.query.etapaId):null}))
+  const document = createExpensePdf(projectId, await getExpenseReport(projectId,{status:String(req.query.status||''),category:String(req.query.categoria||''),search:String(req.query.busca||''),stageId:req.query.etapaId?z.coerce.number().int().positive().parse(req.query.etapaId):null}))
   res.setHeader('Content-Type', 'application/pdf')
   res.setHeader('Content-Disposition', `inline; filename="despesas-${projectId}.pdf"`)
   document.pipe(res)
@@ -89,7 +89,7 @@ paymentsRouter.get('/relatorio.pdf', requireProjectPermission('pagamentos.export
 
 paymentsRouter.get('/relatorio.xlsx', requireProjectPermission('pagamentos.exportar'), async (req, res) => {
   const projectId = req.acessoProjeto!.projetoId
-  const content = await createExpenseWorkbook(projectId, await getExpenseReport(projectId,{status:String(req.query.status||''),search:String(req.query.busca||''),stageId:req.query.etapaId?z.coerce.number().int().positive().parse(req.query.etapaId):null}))
+  const content = await createExpenseWorkbook(projectId, await getExpenseReport(projectId,{status:String(req.query.status||''),category:String(req.query.categoria||''),search:String(req.query.busca||''),stageId:req.query.etapaId?z.coerce.number().int().positive().parse(req.query.etapaId):null}))
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
   res.setHeader('Content-Disposition', `attachment; filename="despesas-${projectId}.xlsx"`)
   res.send(Buffer.from(content))
@@ -113,9 +113,10 @@ paymentsRouter.get('/fornecedores', requireProjectPermission('pagamentos.visuali
 
 paymentsRouter.get('/despesas', requireProjectPermission('pagamentos.visualizar'), async (req, res) => {
   const status=String(req.query.status||'')
+  const category=String(req.query.categoria||'')
   const search=String(req.query.busca||'').trim()
   const stageId=Number.isSafeInteger(Number(req.query.etapaId))&&Number(req.query.etapaId)>0?Number(req.query.etapaId):null
-  res.json(await getExpenseCrudData(req.acessoProjeto!.projetoId,{status,search,stageId}))
+  res.json(await getExpenseCrudData(req.acessoProjeto!.projetoId,{status,category,search,stageId}))
 })
 
 // Kept temporarily for API consumers migrating from the former raw-query shape.
@@ -172,10 +173,10 @@ paymentsRouter.post('/despesas', requireProjectPermission('pagamentos.inserir'),
   await ensureStage(projectId, req.body.etapa_id)
   const purchase = await withTransaction(async (client) => {
     const { rows } = await client.query<{ id: number }>(`INSERT INTO despesas
-      (projeto_id,descricao,etapa_id,status,data_pagamento,forma_pagamento,fornecedor,nome_contato_fornecedor,
+      (projeto_id,descricao,etapa_id,status,categoria,data_pagamento,forma_pagamento,fornecedor,nome_contato_fornecedor,
        contato_fornecedor,observacao,valor_desconto,numero_nota_fiscal,data_emissao,data_agendamento,data_entrega,ordem,criado_por)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id`, [projectId,req.body.descricao,
-      req.body.etapa_id,req.body.status,req.body.data_pagamento,req.body.forma_pagamento,req.body.fornecedor,
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`, [projectId,req.body.descricao,
+      req.body.etapa_id,req.body.status,req.body.categoria,req.body.data_pagamento,req.body.forma_pagamento,req.body.fornecedor,
       req.body.nome_contato_fornecedor,req.body.contato_fornecedor,req.body.observacao,req.body.valor_desconto,req.body.numero_nota_fiscal,req.body.data_emissao,
       req.body.data_agendamento,req.body.data_entrega,req.body.ordem,req.usuarioId])
     await recordAudit(client,{projetoId:projectId,usuarioId:req.usuarioId!,acao:'COMPRA_CRIADA',entidade:'compras',registroId:rows[0]!.id,dadosNovos:req.body,enderecoIp:req.ip})
@@ -190,10 +191,10 @@ paymentsRouter.put('/despesas/:compraId', requireProjectPermission('pagamentos.a
   await withTransaction(async (client) => {
     const before=await client.query('SELECT * FROM despesas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL FOR UPDATE',[purchaseId,projectId])
     if(!before.rows[0])throw new AppError(404,'Compra não encontrada.','COMPRA_NAO_ENCONTRADA')
-    await client.query(`UPDATE despesas SET descricao=$3,etapa_id=$4,status=$5,data_pagamento=$6,forma_pagamento=$7,fornecedor=$8,
-      nome_contato_fornecedor=$9,contato_fornecedor=$10,observacao=$11,valor_desconto=$12,numero_nota_fiscal=$13,data_emissao=$14,data_agendamento=$15,
-      data_entrega=$16,ordem=$17 WHERE id=$1 AND projeto_id=$2`,[purchaseId,projectId,req.body.descricao,req.body.etapa_id,
-      req.body.status,req.body.data_pagamento,req.body.forma_pagamento,req.body.fornecedor,req.body.nome_contato_fornecedor,
+    await client.query(`UPDATE despesas SET descricao=$3,etapa_id=$4,status=$5,categoria=$6,data_pagamento=$7,forma_pagamento=$8,fornecedor=$9,
+      nome_contato_fornecedor=$10,contato_fornecedor=$11,observacao=$12,valor_desconto=$13,numero_nota_fiscal=$14,data_emissao=$15,data_agendamento=$16,
+      data_entrega=$17,ordem=$18 WHERE id=$1 AND projeto_id=$2`,[purchaseId,projectId,req.body.descricao,req.body.etapa_id,
+      req.body.status,req.body.categoria,req.body.data_pagamento,req.body.forma_pagamento,req.body.fornecedor,req.body.nome_contato_fornecedor,
       req.body.contato_fornecedor,req.body.observacao,req.body.valor_desconto,req.body.numero_nota_fiscal,req.body.data_emissao,req.body.data_agendamento,req.body.data_entrega,req.body.ordem])
     await recordAudit(client,{projetoId:projectId,usuarioId:req.usuarioId!,acao:'COMPRA_ATUALIZADA',entidade:'compras',registroId:purchaseId,dadosAnteriores:before.rows[0],dadosNovos:req.body,enderecoIp:req.ip})
   })

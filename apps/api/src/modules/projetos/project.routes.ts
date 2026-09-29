@@ -63,10 +63,12 @@ projectsRouter.put('/:projetoId/dados-obra', requireProjectPermission('configura
     const { rows } = await client.query(`UPDATE projetos SET nome=$2,descricao=$3,endereco=$4,logradouro=$4,numero=$5,complemento=$6,
       bairro=$7,cep=$8,cidade=$9,estado=$10,codigo_ibge_cidade=$11,latitude=$12,longitude=$13,area_com_laje=$14,
       area_sem_laje=$15,area_construida=$16,processo_aprovacao=$17,pasta_digital=$18,planta_numero=$19,alvara=$20,
-      art=$21,cno_obra=$22,matricula_terreno=$23,data_inicio=$24,previsao_termino=$25 WHERE id=$1 RETURNING *`, [
+      art=$21,cno_obra=$22,matricula_terreno=$23,data_inicio=$24,previsao_termino=$25,
+      orcamento_mao_obra=$26,orcamento_materiais=$27 WHERE id=$1 RETURNING *`, [
       req.acessoProjeto!.projetoId,input.nome,input.descricao,input.logradouro,input.numero,input.complemento,input.bairro,input.cep,
       input.cidade,input.estado,input.codigoIbgeCidade,input.latitude,input.longitude,input.areaComLaje,input.areaSemLaje,totalArea || null,
       input.processoAprovacao,input.pastaDigital,input.plantaNumero,input.alvara,input.art,input.cnoObra,input.matriculaTerreno,input.dataInicio,input.previsaoTermino,
+      input.orcamentoMaoObra,input.orcamentoMateriais,
     ])
     await recordAudit(client, { projetoId: req.acessoProjeto!.projetoId, usuarioId: req.usuarioId!, acao: 'PROJETO_ATUALIZADO', entidade: 'projetos', registroId: req.acessoProjeto!.projetoId, dadosAnteriores: before.rows[0], dadosNovos: rows[0], enderecoIp: req.ip })
     return rows[0]

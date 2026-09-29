@@ -17,12 +17,14 @@ const project=z.object({
   latitude:nullableNumeric,longitude:nullableNumeric,data_inicio:nullableDate,previsao_termino:nullableDate,
   area_construida:nullableNumeric,area_com_laje:nullableNumeric,area_sem_laje:nullableNumeric,processo_aprovacao:text,
   pasta_digital:text,planta_numero:text,alvara:text,art:text,cno_obra:text,matricula_terreno:text,
+  orcamento_mao_obra:nonnegative.optional(),orcamento_materiais:nonnegative.optional(),
 }).strict()
 const stage=z.object({old_id:id,parent_old_id:id.nullable(),nome:z.string().min(1).max(180),descricao:text,cor:z.string().regex(/^#[0-9a-fA-F]{6}$/),
   data_inicio_previsto:nullableDate,data_fim_previsto:nullableDate,data_inicio:nullableDate,data_fim:nullableDate,valor_previsto:numeric,valor_executado:numeric,ordem:z.number().int()}).strict()
 const task=z.object({old_id:id,descricao:z.string().min(2).max(240),observacao:text,status:z.enum(['PARADO','INICIADO','FINALIZADO']),prioridade:z.enum(['BAIXA','ALTA'])}).strict()
 const cash=z.object({old_id:id,data:date,descricao:z.string().min(2).max(240),detalhes:text,valor:numeric}).strict()
 const expense=z.object({excluida:z.boolean().optional(),old_id:id,stage_old_id:id.nullable(),descricao:z.string().min(2).max(240),status:z.enum(PAYMENT_STATUS_VALUES),data_pagamento:nullableDate,forma_pagamento:text,
+  categoria:z.enum(['MAO_DE_OBRA','MATERIAL_CONSTRUCAO','DOCUMENTACAO','FRETE','OUTROS']).nullable().optional(),
   fornecedor:text,nome_contato_fornecedor:text,contato_fornecedor:text,observacao:text,valor_desconto:nonnegative,numero_nota_fiscal:text,
   data_emissao:nullableDate,data_agendamento:nullableDate,data_entrega:nullableDate,ordem:z.number().int()}).strict()
 const item=z.object({old_id:id,despesa_old_id:id.nullable(),descricao:z.string().min(2).max(240),quantidade:nonnegative,unidade:text,observacao:text,

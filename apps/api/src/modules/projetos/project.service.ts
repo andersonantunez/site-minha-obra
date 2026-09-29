@@ -23,10 +23,10 @@ export async function createProject(userId: number, input: ProjectInput, ip?: st
       }
     }
     const { rows } = await client.query<{ id: number }>(`INSERT INTO projetos
-      (proprietario_usuario_id,nome,descricao,endereco,logradouro,numero,cidade,estado,data_inicio,previsao_termino,area_construida)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`, [
+      (proprietario_usuario_id,nome,descricao,endereco,logradouro,numero,cidade,estado,data_inicio,previsao_termino,area_construida,orcamento_mao_obra,orcamento_materiais)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, [
       userId,input.nome,input.descricao,input.endereco,input.logradouro,input.numero,input.cidade,input.estado,
-      input.dataInicio,input.previsaoTermino,input.areaConstruida,
+      input.dataInicio,input.previsaoTermino,input.areaConstruida,input.orcamentoMaoObra,input.orcamentoMateriais,
     ])
     const projectId = rows[0]!.id
     await client.query(`INSERT INTO membros_projeto (projeto_id,usuario_id,papel_id)

@@ -1,7 +1,9 @@
 import { z } from 'zod'
+import { parseBrazilianNumber } from '../../shared/importParser.js'
 
 const optionalText = (max: number) => z.string().trim().max(max).optional().nullable().transform((value) => value || null)
 const optionalNumber = (min: number, max: number) => z.preprocess((value) => value === '' || value === undefined ? null : value, z.coerce.number().min(min).max(max).optional().nullable())
+const optionalMoney = z.preprocess(parseBrazilianNumber, z.coerce.number().min(0).max(999_999_999_999.99).optional().nullable()).transform((value) => value ?? null)
 
 export const projectInputSchema = z.object({
   nome: z.string().trim().min(3).max(160),
@@ -22,6 +24,8 @@ export const projectInputSchema = z.object({
   longitude: optionalNumber(-180, 180),
   areaComLaje: optionalNumber(0, 99_999_999),
   areaSemLaje: optionalNumber(0, 99_999_999),
+  orcamentoMaoObra: optionalMoney,
+  orcamentoMateriais: optionalMoney,
   processoAprovacao: optionalText(80),
   pastaDigital: optionalText(80),
   plantaNumero: optionalText(80),

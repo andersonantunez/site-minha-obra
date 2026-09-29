@@ -6,11 +6,9 @@ export const formatStageSelectionOption = (stage: StageOption, stages: StageOpti
 export const scheduleStageColorClass = (position: number) => `stage-color-${position % 8}`
 export const stageColorClassFromOrder = (order: number | null | undefined) => scheduleStageColorClass(Math.max(0, Number(order || 1) - 1))
 
+export const stageTint = (color: string) => `color-mix(in srgb, ${color} 12%, #fff)`
+
 export const stageBadgeStyle = (color: string | null | undefined) => {
   if (!color || !/^#[0-9a-f]{6}$/i.test(color)) return undefined
-  const red = Number.parseInt(color.slice(1, 3), 16)
-  const green = Number.parseInt(color.slice(3, 5), 16)
-  const blue = Number.parseInt(color.slice(5, 7), 16)
-  const luminance = (red * 299 + green * 587 + blue * 114) / 1000
-  return { backgroundColor: color, color: luminance > 160 ? '#3e493f' : '#ffffff' }
+  return { backgroundColor: stageTint(color), color }
 }

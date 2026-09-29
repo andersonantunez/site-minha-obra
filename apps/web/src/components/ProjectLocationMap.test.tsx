@@ -5,9 +5,10 @@ import { ProjectLocationMap } from './ProjectLocationMap'
 
 afterEach(() => { cleanup(); delete window.L; vi.restoreAllMocks() })
 
-it('preserves the Leaflet container when editing changes and blocks position changes while locked', () => {
+it('preserves the Leaflet container when editing changes and blocks map interactions while locked', () => {
   let click: (event: { latlng: { lat: number; lng: number } }) => void = () => {}
-  const map = { setView: vi.fn().mockReturnThis(), invalidateSize: vi.fn().mockReturnThis(), whenReady: vi.fn(), remove: vi.fn(), on: vi.fn((event: string, callback: typeof click) => { if (event === 'click') click = callback }) }
+  const mapControls = { enable: vi.fn(), disable: vi.fn() }
+  const map = { setView: vi.fn().mockReturnThis(), invalidateSize: vi.fn().mockReturnThis(), whenReady: vi.fn(), remove: vi.fn(), on: vi.fn((event: string, callback: typeof click) => { if (event === 'click') click = callback }), dragging: mapControls, scrollWheelZoom: mapControls, touchZoom: mapControls, doubleClickZoom: mapControls, boxZoom: mapControls, keyboard: mapControls }
   const marker = { addTo: vi.fn().mockReturnThis(), setLatLng: vi.fn(), getLatLng: vi.fn(), on: vi.fn(), dragging: { enable: vi.fn(), disable: vi.fn() } }
   window.L = {
     map: vi.fn((element: HTMLElement) => { element.classList.add('leaflet-container'); return map }),
@@ -22,9 +23,11 @@ it('preserves the Leaflet container when editing changes and blocks position cha
   expect(canvas.parentElement?.classList.contains('map-frame')).toBe(true)
   click({ latlng: { lat: -32, lng: -52 } })
   expect(onChange).not.toHaveBeenCalled()
+  expect(mapControls.disable).toHaveBeenCalled()
   rerender(<ProjectLocationMap {...props} editable />)
   expect(container.querySelector('.leaflet-container')).toBe(canvas)
   expect(marker.dragging.enable).toHaveBeenCalled()
+  expect(mapControls.enable).toHaveBeenCalled()
   click({ latlng: { lat: -32, lng: -52 } })
   expect(onChange).toHaveBeenCalledWith(-32, -52)
   rerender(<ProjectLocationMap {...props} editable={false} />)

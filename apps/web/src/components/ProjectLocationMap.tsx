@@ -2,7 +2,8 @@ import { useEffect, useRef } from 'react'
 
 type LatLng = { lat: number; lng: number }
 type LeafletMarker = { addTo: (map: LeafletMap) => LeafletMarker; setLatLng: (position: [number,number]) => void; getLatLng: () => LatLng; on: (event: string, callback: () => void) => void; dragging?: { enable: () => void; disable: () => void } }
-type LeafletMap = { setView: (position: [number,number], zoom: number) => LeafletMap; invalidateSize: (options?: { pan?: boolean }) => LeafletMap; on: (event: string, callback: (value: { latlng: LatLng }) => void) => void; whenReady: (callback: () => void) => LeafletMap; remove: () => void }
+type LeafletControl = { enable: () => void; disable: () => void }
+type LeafletMap = { setView: (position: [number,number], zoom: number) => LeafletMap; invalidateSize: (options?: { pan?: boolean }) => LeafletMap; on: (event: string, callback: (value: { latlng: LatLng }) => void) => void; whenReady: (callback: () => void) => LeafletMap; remove: () => void; dragging?: LeafletControl; scrollWheelZoom?: LeafletControl; touchZoom?: LeafletControl; doubleClickZoom?: LeafletControl; boxZoom?: LeafletControl; keyboard?: LeafletControl }
 type LeafletApi = { map: (element: HTMLElement, options?: { zoomAnimation: boolean; fadeAnimation: boolean; markerZoomAnimation: boolean }) => LeafletMap; tileLayer: (url: string, options: { attribution: string; maxZoom: number }) => { addTo: (map: LeafletMap) => void }; marker: (position: [number,number], options: { draggable: boolean; autoPan: boolean; title: string }) => LeafletMarker }
 
 declare global { interface Window { L?: LeafletApi } }
@@ -45,10 +46,12 @@ export function ProjectLocationMap({ latitude, longitude, editable, onChange }: 
     editableRef.current = editable
     if (editable) markerRef.current?.dragging?.enable()
     else markerRef.current?.dragging?.disable()
+    const map = mapRef.current
+    const controls = [map?.dragging,map?.scrollWheelZoom,map?.touchZoom,map?.doubleClickZoom,map?.boxZoom,map?.keyboard]
+    controls.forEach((control) => editable ? control?.enable() : control?.disable())
     window.requestAnimationFrame(() => {
-      const map = mapRef.current
-      map?.invalidateSize({ pan: false })
-      if (latitude !== null && longitude !== null) map?.setView([latitude, longitude], 17)
+      mapRef.current?.invalidateSize({ pan: false })
+      if (latitude !== null && longitude !== null) mapRef.current?.setView([latitude, longitude], 17)
     })
   }, [editable, latitude, longitude])
   useEffect(() => {

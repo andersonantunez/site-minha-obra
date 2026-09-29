@@ -13,9 +13,10 @@ dashboardRouter.use(requireAuth)
 
 dashboardRouter.get('/', requireProjectPermission('visao_geral.visualizar'), async (req, res) => {
   const projectId = req.acessoProjeto!.projetoId
-  const [project, metrics, evolution, distribution, suppliers, recentPayments, nextStages, recentDocuments, activity] = await Promise.all([
+  const [project, metrics, evolution, distribution, categoryDistribution, suppliers, recentPayments, nextStages, recentDocuments, activity] = await Promise.all([
     query(`SELECT p.id,p.nome,p.descricao,p.data_inicio,p.previsao_termino,
       p.area_construida,p.area_com_laje,p.area_sem_laje,p.cidade,p.estado,p.bairro,p.logradouro,p.numero,p.latitude,p.longitude,
+      p.orcamento_mao_obra,p.orcamento_materiais,
       p.processo_aprovacao,p.pasta_digital,p.planta_numero,p.alvara,p.art,p.cno_obra,p.matricula_terreno,
       presentation.id AS imagem_apresentacao_id,presentation.url AS imagem_apresentacao_url
       FROM projetos p
@@ -31,13 +32,20 @@ dashboardRouter.get('/', requireProjectPermission('visao_geral.visualizar'), asy
       COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1),0)::numeric(15,2) AS comprometido,
       COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1 AND status=ANY($2::varchar[])),0)::numeric(15,2) AS pago,
       COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1 AND status=ANY($2::varchar[])),0)::numeric(15,2) AS total_pagamentos,
+      COALESCE((SELECT orcamento_mao_obra FROM projetos WHERE id=$1),0)::numeric(15,2) AS orcamento_mao_obra,
+      COALESCE((SELECT orcamento_materiais FROM projetos WHERE id=$1),0)::numeric(15,2) AS orcamento_materiais,
+      COALESCE((SELECT COALESCE(orcamento_mao_obra,0)+COALESCE(orcamento_materiais,0) FROM projetos WHERE id=$1),0)::numeric(15,2) AS orcamento_inicial_total,
+      COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1 AND status=ANY($2::varchar[]) AND categoria='MAO_DE_OBRA'),0)::numeric(15,2) AS gasto_mao_obra,
+      COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1 AND status=ANY($2::varchar[]) AND categoria IS NOT NULL AND categoria<>'MAO_DE_OBRA'),0)::numeric(15,2) AS gasto_materiais_e_demais_categorias,
       COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1 AND status=$3),0)::numeric(15,2) AS pago_aguardando_entrega,
       COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1 AND status=$4),0)::numeric(15,2) AS concluido,
       COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1 AND status=$5),0)::numeric(15,2) AS em_negociacao,
       COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1 AND status=$6),0)::numeric(15,2) AS pendente,
-      (SELECT COUNT(*)::int FROM cronogramas WHERE projeto_id=$1 AND parent_id IS NULL AND excluido_em IS NULL AND data_fim IS NOT NULL AND data_fim<=CURRENT_DATE) AS etapas_concluidas,
-      (SELECT COUNT(*)::int FROM cronogramas WHERE projeto_id=$1 AND parent_id IS NULL AND excluido_em IS NULL AND data_inicio<=CURRENT_DATE AND (data_fim IS NULL OR data_fim>CURRENT_DATE)) AS etapas_em_andamento,
-      COALESCE((SELECT ROUND(AVG(CASE WHEN data_fim IS NOT NULL AND data_fim<=CURRENT_DATE THEN 100 WHEN data_inicio<=CURRENT_DATE THEN 50 ELSE 0 END)) FROM cronogramas WHERE projeto_id=$1 AND parent_id IS NULL AND excluido_em IS NULL),0) AS percentual_andamento`, [projectId,SETTLED_PAYMENT_STATUSES,PAYMENT_STATUS.PAGO_AGUARDANDO_ENTREGA,PAYMENT_STATUS.CONCLUIDO,PAYMENT_STATUS.EM_NEGOCIACAO,PAYMENT_STATUS.PENDENTE]),
+      (SELECT COUNT(*)::int FROM cronogramas WHERE projeto_id=$1 AND parent_id IS NOT NULL AND excluido_em IS NULL AND data_fim IS NOT NULL AND data_fim<=CURRENT_DATE) AS subetapas_concluidas,
+      (SELECT COUNT(*)::int FROM cronogramas WHERE projeto_id=$1 AND parent_id IS NOT NULL AND excluido_em IS NULL AND data_inicio IS NOT NULL AND data_inicio<=CURRENT_DATE AND (data_fim IS NULL OR data_fim>CURRENT_DATE)) AS subetapas_em_andamento,
+      COALESCE((SELECT ROUND(100 * COALESCE(SUM(peso) FILTER (WHERE data_fim IS NOT NULL AND data_fim<=CURRENT_DATE),0) / NULLIF(SUM(peso),0),0)
+        FROM (SELECT data_inicio,data_fim,GREATEST(1,COALESCE(data_fim_previsto-data_inicio_previsto+1,1))::numeric AS peso FROM cronogramas
+          WHERE projeto_id=$1 AND parent_id IS NOT NULL AND excluido_em IS NULL) AS subetapas),0) AS percentual_andamento`, [projectId,SETTLED_PAYMENT_STATUSES,PAYMENT_STATUS.PAGO_AGUARDANDO_ENTREGA,PAYMENT_STATUS.CONCLUIDO,PAYMENT_STATUS.EM_NEGOCIACAO,PAYMENT_STATUS.PENDENTE]),
     query(`WITH ${paymentFinancialCte}, meses AS (
       SELECT competencia AS mes,SUM(valor) AS previsto FROM itens_orcamento WHERE projeto_id=$1 AND excluido_em IS NULL GROUP BY competencia
     ), pagos AS (
@@ -50,6 +58,10 @@ dashboardRouter.get('/', requireProjectPermission('visao_geral.visualizar'), asy
       LEFT JOIN cronogramas e ON e.id=p.etapa_id LEFT JOIN cronogramas pai ON pai.id=e.parent_id
       WHERE p.projeto_id=$1 AND p.status=ANY($2::varchar[])
       GROUP BY COALESCE('ETAPA ' || COALESCE(pai.ordem,e.ordem)::text || ' - ' || COALESCE(pai.nome,e.nome),'Sem etapa') ORDER BY total DESC`, [projectId,SETTLED_PAYMENT_STATUSES]),
+    query(`WITH ${paymentFinancialCte} SELECT p.categoria,COALESCE(SUM(p.valor),0)::numeric(15,2) AS total
+      FROM pagamentos_financeiros p WHERE p.projeto_id=$1 AND p.status=ANY($2::varchar[])
+        AND p.categoria IN ('MAO_DE_OBRA','MATERIAL_CONSTRUCAO','DOCUMENTACAO','FRETE','OUTROS')
+      GROUP BY p.categoria ORDER BY total DESC`, [projectId,SETTLED_PAYMENT_STATUSES]),
     query(`WITH ${paymentFinancialCte} SELECT COALESCE(NULLIF(TRIM(p.fornecedor),''),'Não informado') AS fornecedor,
       COALESCE(SUM(p.valor),0)::numeric(15,2) AS total FROM pagamentos_financeiros p
       WHERE p.projeto_id=$1 AND p.status=ANY($2::varchar[])
@@ -66,7 +78,7 @@ dashboardRouter.get('/', requireProjectPermission('visao_geral.visualizar'), asy
       WHERE ra.projeto_id=$1 ORDER BY ra.criado_em DESC LIMIT 8`, [projectId]),
   ])
   if (!project.rows[0]) throw new AppError(404, 'Projeto não encontrado.', 'PROJETO_NAO_ENCONTRADO')
-  res.json({ projeto: project.rows[0], indicadores: metrics.rows[0], evolucaoFinanceira: evolution.rows, distribuicaoEtapas: distribution.rows, fornecedores: suppliers.rows, ultimosPagamentos: recentPayments.rows, proximasEtapas: nextStages.rows, documentosRecentes: recentDocuments.rows, atividadesRecentes: activity.rows })
+  res.json({ projeto: project.rows[0], indicadores: metrics.rows[0], evolucaoFinanceira: evolution.rows, distribuicaoEtapas: distribution.rows, distribuicaoCategorias: categoryDistribution.rows, fornecedores: suppliers.rows, ultimosPagamentos: recentPayments.rows, proximasEtapas: nextStages.rows, documentosRecentes: recentDocuments.rows, atividadesRecentes: activity.rows })
 })
 
 dashboardRouter.get('/imagem-apresentacao', requireProjectPermission('visao_geral.visualizar'), async (req, res) => {

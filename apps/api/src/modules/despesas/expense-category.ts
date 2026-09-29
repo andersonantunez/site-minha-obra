@@ -1,0 +1,10 @@
+export const EXPENSE_CATEGORY = {
+  MAO_DE_OBRA: 'MAO_DE_OBRA',
+  MATERIAL_CONSTRUCAO: 'MATERIAL_CONSTRUCAO',
+  DOCUMENTACAO: 'DOCUMENTACAO',
+  FRETE: 'FRETE',
+  OUTROS: 'OUTROS',
+} as const
+
+export const EXPENSE_CATEGORY_VALUES = Object.values(EXPENSE_CATEGORY)
+export type ExpenseCategory = (typeof EXPENSE_CATEGORY_VALUES)[number]

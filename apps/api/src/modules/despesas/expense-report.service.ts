@@ -5,15 +5,19 @@ import { AppError } from '../../shared/errors.js'
 import { reportMoney, reportDate, spreadsheetNumber, spreadsheetDate } from '../../shared/report.js'
 import { PAYMENT_STATUS_COLORS, PAYMENT_STATUS_LABELS, PAYMENT_STATUS_VALUES, SETTLED_PAYMENT_STATUSES, type PaymentStatus } from '../pagamentos/payment-status.js'
 import { expenseItemTotalSql, expenseTotalSql } from './expense-financial.js'
+import { EXPENSE_CATEGORY_VALUES, type ExpenseCategory } from './expense-category.js'
+
+const EXPENSE_CATEGORY_LABELS:Record<ExpenseCategory,string>={MAO_DE_OBRA:'Mão de obra',MATERIAL_CONSTRUCAO:'Material de construção',DOCUMENTACAO:'Documentação',FRETE:'Frete',OUTROS:'Outros'}
 
 export type ExpenseReportItem = {id:number;despesa_id:number|null;descricao:string;quantidade:string|null;unidade:string|null;observacao:string|null;valor_unitario:string|null;valor_desconto:string|null;valor_total:string|null;valor_total_manual:boolean;ordem?:number;links_cotacao:{id:number;url:string}[]}
 export type ExpenseReportDocument = {id:number;despesa_id:number|null;titulo:string;tipo_origem:string;url:string|null;nome_original:string|null;categorias:string[];criado_em:string}
-export type ExpenseReportEntry = {id:number;descricao:string;etapa_id:number|null;etapa:string|null;etapa_ordem?:number|null;etapa_cor?:string|null;status:PaymentStatus;fornecedor:string|null;nome_contato_fornecedor:string|null;contato_fornecedor:string|null;forma_pagamento:string|null;data_pagamento:string|null;numero_nota_fiscal:string|null;data_emissao:string|null;data_agendamento:string|null;data_entrega:string|null;observacao:string|null;valor_desconto:string|null;valor_total:string;documento:string;ordem?:number;itens:ExpenseReportItem[];documentos:ExpenseReportDocument[]}
+export type ExpenseReportEntry = {id:number;descricao:string;etapa_id:number|null;etapa:string|null;etapa_ordem?:number|null;etapa_cor?:string|null;status:PaymentStatus;categoria?:ExpenseCategory|null;fornecedor:string|null;nome_contato_fornecedor:string|null;contato_fornecedor:string|null;forma_pagamento:string|null;data_pagamento:string|null;numero_nota_fiscal:string|null;data_emissao:string|null;data_agendamento:string|null;data_entrega:string|null;observacao:string|null;valor_desconto:string|null;valor_total:string;documento:string;ordem?:number;itens:ExpenseReportItem[];documentos:ExpenseReportDocument[]}
 export type ExpenseReport = {projeto:{nome:string;endereco?:string|null;cep?:string|null;logradouro?:string|null;numero?:string|null;complemento?:string|null;bairro?:string|null;cidade:string|null;estado:string|null;latitude?:string|null;longitude?:string|null};despesas:ExpenseReportEntry[];itens_sem_despesa:ExpenseReportItem[]}
-export type ExpenseReportFilters = {status?:string;search?:string;stageId?:number|null}
+export type ExpenseReportFilters = {status?:string;category?:string;search?:string;stageId?:number|null}
 
 export async function getExpenseReport(projectId:number, filters:ExpenseReportFilters={}):Promise<ExpenseReport> {
   if(filters.status&&!PAYMENT_STATUS_VALUES.includes(filters.status as PaymentStatus))throw new AppError(422,'Status de despesa inválido.','STATUS_INVALIDO')
+  if(filters.category&&!EXPENSE_CATEGORY_VALUES.includes(filters.category as ExpenseCategory))throw new AppError(422,'Categoria de despesa inválida.','CATEGORIA_INVALIDA')
   return withTransaction(async client=>{
     await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
     const project=await client.query<ExpenseReport['projeto']>('SELECT nome,endereco,cep,logradouro,numero,complemento,bairro,cidade,estado,latitude,longitude FROM projetos WHERE id=$1 AND excluido_em IS NULL',[projectId])
@@ -26,8 +30,9 @@ export async function getExpenseReport(projectId:number, filters:ExpenseReportFi
       WHERE d.projeto_id=$1 AND d.excluido_em IS NULL AND ($2='' OR d.status=$2)
         AND ($3='%%' OR d.descricao ILIKE $3 OR d.fornecedor ILIKE $3)
         AND ($4::bigint IS NULL OR d.etapa_id=$4 OR e.parent_id=$4)
+        AND ($5='' OR d.categoria=$5)
       ORDER BY CASE d.status WHEN 'PENDENTE' THEN 1 WHEN 'EM_NEGOCIACAO' THEN 2 WHEN 'PAGO_AGUARDANDO_ENTREGA' THEN 3 ELSE 4 END,d.ordem,d.id`,
-      [projectId,filters.status||'',`%${filters.search||''}%`,filters.stageId||null])
+      [projectId,filters.status||'',`%${filters.search||''}%`,filters.stageId||null,filters.category||''])
     const items=await client.query<ExpenseReportItem>(`SELECT i.id,i.compra_id AS despesa_id,i.descricao,i.quantidade,i.unidade,i.observacao,i.valor_unitario,i.valor_desconto,i.valor_total_manual,i.ordem,
       (${expenseItemTotalSql('i')})::numeric(15,2) AS valor_total,
       COALESCE((SELECT JSONB_AGG(JSONB_BUILD_OBJECT('id',l.id,'url',l.url) ORDER BY l.id) FROM links_cotacao_pagamento l WHERE l.pagamento_id=i.id),'[]'::jsonb) AS links_cotacao
@@ -62,19 +67,20 @@ export function expenseCrudProjection(report:ExpenseReport) {
 export function expenseReportBlocks(report:ExpenseReport){
  return report.despesas.map(d=>({
   expense:d,
-  parent:[d.descricao,d.etapa||'—',d.documento,PAYMENT_STATUS_LABELS[d.status],d.fornecedor||'—',d.data_pagamento,d.valor_total],
+  parent:[d.descricao,d.etapa||'—',d.categoria?EXPENSE_CATEGORY_LABELS[d.categoria]:'Sem categoria',PAYMENT_STATUS_LABELS[d.status],d.fornecedor||'—',d.data_pagamento,d.valor_total],
   items:d.itens.map(i=>[i.descricao,i.quantidade,i.unidade,i.valor_unitario,i.valor_desconto,i.valor_total]),
  }))
 }
-const parentLabels=['Descrição','Etapa','Documento','Status','Fornecedor','Data do pagamento','Valor total']
+const parentLabels=['Descrição','Etapa','Categoria','Status','Fornecedor','Data do pagamento','Valor total']
 const itemLabels=['Descrição','Quantidade','Unidade','Valor unitário','Valor desconto','Valor total']
 const expensePdfParentColumns=[
- {label:'Descrição',index:0,width:205,align:'left' as const},
- {label:'Etapa',index:1,width:135,align:'center' as const,badge:'stage' as const},
- {label:'Status',index:3,width:135,align:'center' as const,badge:'status' as const},
- {label:'Fornecedor',index:4,width:125,align:'left' as const,verticalAlign:'middle' as const},
- {label:'Data do pagamento',index:5,width:100,align:'left' as const,verticalAlign:'middle' as const},
- {label:'Valor total',index:6,width:70,align:'right' as const,verticalAlign:'middle' as const},
+ {label:'Descrição',index:0,width:165,align:'left' as const},
+ {label:'Etapa',index:1,width:120,align:'center' as const,badge:'stage' as const},
+ {label:'Categoria',index:2,width:105,align:'center' as const},
+ {label:'Status',index:3,width:125,align:'center' as const,badge:'status' as const},
+ {label:'Fornecedor',index:4,width:95,align:'left' as const,verticalAlign:'middle' as const},
+ {label:'Data do pagamento',index:5,width:95,align:'left' as const,verticalAlign:'middle' as const},
+ {label:'Valor total',index:6,width:65,align:'right' as const,verticalAlign:'middle' as const},
 ]
 export function createExpensePdf(_projectId:number, report:ExpenseReport) {
  const pdf=reportPdf('Despesas',report.projeto)
@@ -112,6 +118,8 @@ export function expenseFinancialSummary(report:ExpenseReport){
  return values
 }
 
+// Mantido para composição do resumo financeiro em relatórios consolidados.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function appendExpenseFinancialSummary(pdf:PDFKit.PDFDocument,report:ExpenseReport){
  const summary=expenseFinancialSummary(report),left=36,width=770,innerLeft=left+14,innerWidth=width-28,rowHeight=24,headerHeight=22,tableOffset=64,containerHeight=tableOffset+headerHeight+rowHeight*2+14
  if(pdf.y+containerHeight+24>530)pdf.addPage()

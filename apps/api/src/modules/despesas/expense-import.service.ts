@@ -32,6 +32,7 @@ export function parseExpenseImport(format:ImportFormat,content:string){
       for(const key of ['links_cotacao','categorias'])if(typeof raw[key]==='string')raw[key]=JSON.parse(String(raw[key]))
     }catch{errors.push({linha:line,erros:['links_cotacao e categorias devem ser listas JSON válidas.']});return}
     if(raw.status)raw.status=PAYMENT_STATUSES.find(option=>option.label.toLowerCase()===String(raw.status).toLowerCase())?.value||raw.status
+    if(raw.categoria){const category=String(raw.categoria).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[ -]+/g,'_');raw.categoria=category==='MATERIAL_DE_CONSTRUCAO'?'MATERIAL_CONSTRUCAO':category}
     // O TSV utiliza um cabeçalho comum para os três tipos; células vazias não são campos obsoletos.
     for(const [key,value] of Object.entries(raw))if(value===null)delete raw[key]
     const result=rowSchema.safeParse(raw)
@@ -69,9 +70,9 @@ export async function applyExpenseImport(client:PoolClient,projectId:number,user
     await client.query('UPDATE despesas SET excluido_em=NOW() WHERE projeto_id=$1 AND excluido_em IS NULL',[projectId])
   }
   for(const row of rows)if(row.tipo==='DESPESA'){
-    const result=await client.query<{id:number}>(`INSERT INTO despesas (projeto_id,descricao,etapa_id,status,fornecedor,nome_contato_fornecedor,contato_fornecedor,observacao,valor_desconto,data_pagamento,forma_pagamento,numero_nota_fiscal,data_emissao,data_agendamento,data_entrega,criado_por)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
-      [projectId,row.descricao,resolved.get(row.referencia),row.status,row.fornecedor,row.nome_contato_fornecedor,row.contato_fornecedor,row.observacao,row.valor_desconto,row.data_pagamento,row.forma_pagamento,row.numero_nota_fiscal,row.data_emissao,row.data_agendamento,row.data_entrega,userId])
+    const result=await client.query<{id:number}>(`INSERT INTO despesas (projeto_id,descricao,etapa_id,status,categoria,fornecedor,nome_contato_fornecedor,contato_fornecedor,observacao,valor_desconto,data_pagamento,forma_pagamento,numero_nota_fiscal,data_emissao,data_agendamento,data_entrega,criado_por)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id`,
+      [projectId,row.descricao,resolved.get(row.referencia),row.status,row.categoria,row.fornecedor,row.nome_contato_fornecedor,row.contato_fornecedor,row.observacao,row.valor_desconto,row.data_pagamento,row.forma_pagamento,row.numero_nota_fiscal,row.data_emissao,row.data_agendamento,row.data_entrega,userId])
     parents.set(row.referencia,result.rows[0]!.id)
   }
   let items=0,documents=0

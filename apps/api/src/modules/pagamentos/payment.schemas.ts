@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { parseBrazilianNumber } from '../../shared/importParser.js'
 import { PAYMENT_STATUS_VALUES, SETTLED_PAYMENT_STATUSES } from './payment-status.js'
+import { EXPENSE_CATEGORY_VALUES } from '../despesas/expense-category.js'
 
 function normalizeDate(value: unknown) {
   if (typeof value !== 'string') return value
@@ -35,6 +36,7 @@ export const purchaseSchema = z.object({
   descricao: z.string().trim().min(2).max(240),
   etapa_id: z.coerce.number().int().positive(),
   status: z.enum(PAYMENT_STATUS_VALUES).default('PENDENTE'),
+  categoria: z.enum(EXPENSE_CATEGORY_VALUES).optional().nullable(),
   data_pagamento: optionalDate,
   forma_pagamento: z.enum(['PIX', 'CARTAO', 'DINHEIRO', 'BOLETO', 'TRANSFERENCIA', 'OUTRO']).optional().nullable(),
   fornecedor: optionalText(180),

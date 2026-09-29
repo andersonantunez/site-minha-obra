@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { CalendarClock, CircleHelp, FileCheck2, MapPin, Ruler } from 'lucide-react'
+import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from 'recharts'
 import { EmptyState, ErrorNotice, PageHeader } from '../components/Ui'
 import { api } from '../lib/api'
-import { chartPalette, distributionChartColors } from '../lib/chartPalette'
+import { dashboardRankColors } from '../lib/chartPalette'
 import { formatDate, formatMoney, formatMonth } from '../lib/format'
 import { ScheduleGantt } from '../components/ScheduleGantt'
 
@@ -29,6 +30,8 @@ type Project = {
   art: string | null
   cno_obra: string | null
   matricula_terreno: string | null
+  orcamento_mao_obra: string | null
+  orcamento_materiais: string | null
   imagem_apresentacao_id: number | null
   imagem_apresentacao_url: string | null
 }
@@ -40,20 +43,29 @@ type Dashboard = {
     orcamento_com_provisao: string
     total_provisionado: string
     total_pagamentos: string
-    etapas_concluidas: number
-    etapas_em_andamento: number
+    orcamento_mao_obra: string
+    orcamento_materiais: string
+    orcamento_inicial_total: string
+    gasto_mao_obra: string
+    gasto_materiais_e_demais_categorias: string
+    subetapas_concluidas: number
+    subetapas_em_andamento: number
     percentual_andamento: string
   }
   evolucaoFinanceira: { mes: string; previsto: string; realizado: string }[]
   distribuicaoEtapas: { etapa: string; total: string }[]
+  distribuicaoCategorias: { categoria: 'MAO_DE_OBRA' | 'MATERIAL_CONSTRUCAO' | 'DOCUMENTACAO' | 'FRETE' | 'OUTROS'; total: string }[]
   fornecedores: { fornecedor: string; total: string }[]
 }
 
 type DonutItem = { name: string; value: number; color: string }
 
-const PAYMENT_COLOR = chartPalette.progress
-const BALANCE_COLOR = chartPalette.sidebar
-const PROVISION_COLOR = BALANCE_COLOR
+function rankChartRows<T>(rows: T[], value: (row: T) => number, keepOrder = true): (T & { color: string })[] {
+  const ranked = rows.map((row, index) => ({ row, index })).sort((left, right) => value(right.row) - value(left.row) || left.index - right.index)
+  const colors = new Map(ranked.map(({ index }, rank) => [index, dashboardRankColors[Math.min(rank, dashboardRankColors.length - 1)]!]))
+  const colored = rows.map((row, index) => ({ ...row, color: colors.get(index)! }))
+  return keepOrder ? colored : ranked.map(({ index }) => colored[index]!)
+}
 
 function DashboardHelp({ id, text, inverse = false }: { id: string; text: string; inverse?: boolean }) {
   return <span className={`dashboard-help${inverse ? ' inverse' : ''}`}>
@@ -69,8 +81,8 @@ function DashboardPanelHeader({ eyebrow, title, help, helpId }: { eyebrow: strin
   </header>
 }
 
-function DonutLegend({ items }: { items: DonutItem[] }) {
-  const total = items.reduce((sum, item) => sum + item.value, 0)
+function DonutLegend({ items, totalValue }: { items: DonutItem[]; totalValue?: number }) {
+  const total = totalValue ?? items.reduce((sum, item) => sum + item.value, 0)
   return <div className="overview-chart-legend">
     {items.map((item) => <div key={item.name}>
       <i style={{ backgroundColor: item.color }} />
@@ -92,10 +104,10 @@ function FinancialScenario({ title, eyebrow, budgetLabel, budget, totalPaid, hel
   provisioned?: boolean
 }) {
   const balance = budget - totalPaid
-  const donutItems: DonutItem[] = [
-    { name: 'Pagamentos', value: Math.max(totalPaid, 0), color: PAYMENT_COLOR },
-    { name: 'Saldo disponível', value: Math.max(balance, 0), color: provisioned ? PROVISION_COLOR : BALANCE_COLOR },
-  ]
+  const donutItems = rankChartRows([
+    { name: 'Pagamentos', value: Math.max(totalPaid, 0) },
+    { name: 'Saldo disponível', value: Math.max(balance, 0) },
+  ], item => item.value, false)
   const hasChart = donutItems.some((item) => item.value > 0)
 
   return <article className="overview-financial-scenario">
@@ -117,6 +129,22 @@ function FinancialScenario({ title, eyebrow, budgetLabel, budget, totalPaid, hel
         <DonutLegend items={donutItems} />
       </div>
     </div>
+  </article>
+}
+
+function InitialBudgetCard({ title, description, budget, spent, tone }: { title: string; description: string; budget: number; spent: number; tone: 'total' | 'labor' | 'materials' }) {
+  const difference = budget - spent
+  const percentage = budget > 0 ? (spent / budget) * 100 : 0
+  const trackPercentage = Math.min(100, Math.max(0, percentage))
+  return <article className={`initial-budget-card tone-${tone}${percentage > 100 ? ' over-budget' : ''}`}>
+    <header><span>{title}</span><strong>{budget > 0 ? `${percentage.toFixed(1).replace('.', ',')}%` : '—'}</strong></header>
+    <p>{description}</p>
+    <div className="initial-budget-track"><i style={{ width: `${trackPercentage}%` }} /></div>
+    <dl>
+      <div><dt>Valor orçado</dt><dd>{formatMoney(budget)}</dd></div>
+      <div className="initial-budget-realized"><dt>Valor realizado</dt><dd>{formatMoney(spent)}</dd></div>
+      <div><dt>Diferença</dt><dd className={difference < 0 ? 'negative' : ''}>{formatMoney(difference)}</dd></div>
+    </dl>
   </article>
 }
 
@@ -144,6 +172,7 @@ function buildMonthlyPayments(rows: Dashboard['evolucaoFinanceira']) {
 
 export function ProjectDashboardPage() {
   const { projetoId } = useParams()
+  const [includeFuture, setIncludeFuture] = useState(false)
   const { data, error, isLoading } = useQuery({ queryKey: ['dashboard', projetoId], queryFn: () => api<Dashboard>(`/projetos/${projetoId}/dashboard`) })
   if (isLoading) return <div className="route-loading"><span /><p>Consolidando a obra…</p></div>
   if (error) return <ErrorNotice message={error.message} />
@@ -153,6 +182,7 @@ export function ProjectDashboardPage() {
   const currentBudget = Number(indicadores.orcamento_atual)
   const provisionedBudget = Number(indicadores.orcamento_com_provisao)
   const totalPayments = Number(indicadores.total_pagamentos)
+  const financialBudget = includeFuture ? provisionedBudget : currentBudget
   const progress = Math.max(0, Math.min(100, Number(indicadores.percentual_andamento)))
   const cityState = [projeto.cidade, projeto.estado].filter(Boolean).join(', ')
   const locationLabel = [cityState, projeto.bairro].filter(Boolean).join(' - ') || 'Localização não informada'
@@ -171,9 +201,12 @@ export function ProjectDashboardPage() {
     ['CNO da obra', projeto.cno_obra],
     ['Matrícula do terreno', projeto.matricula_terreno],
   ].filter((entry): entry is [string, string] => Boolean(entry[1]))
-  const distribution: DonutItem[] = data.distribuicaoEtapas.map((item, index) => ({ name: item.etapa, value: Number(item.total), color: distributionChartColors[index % distributionChartColors.length]! }))
+  const distribution = rankChartRows(data.distribuicaoEtapas.map(item => ({ name: item.etapa, value: Number(item.total) })), item => item.value, false)
+  const categoryNames={MAO_DE_OBRA:'Mão de obra',MATERIAL_CONSTRUCAO:'Material de construção',DOCUMENTACAO:'Documentação',FRETE:'Frete',OUTROS:'Outros'} as const
+  const categoryDistribution=rankChartRows(data.distribuicaoCategorias.map(item=>({name:categoryNames[item.categoria],value:Number(item.total)})),item=>item.value,false)
   const monthlyPayments = buildMonthlyPayments(data.evolucaoFinanceira)
-  const supplierPayments = data.fornecedores.map((item) => ({ ...item, total: Number(item.total) }))
+  const supplierPayments = rankChartRows(data.fornecedores.map((item) => ({ ...item, total: Number(item.total) })), item => item.total)
+  const monthlyPaymentsWithColors = rankChartRows(monthlyPayments, item => item.total)
   const projectImage = projeto.imagem_apresentacao_url || (projeto.imagem_apresentacao_id ? `/api/projetos/${projetoId}/dashboard/imagem-apresentacao` : '')
 
   return <div className="dashboard-page overview-dashboard">
@@ -196,31 +229,32 @@ export function ProjectDashboardPage() {
       <article className="project-progress-card overview-progress-card">
         <div className="overview-progress-image">{projectImage && <img src={projectImage} alt="" aria-hidden="true" />}</div>
         <div className="overview-progress-content">
-          <DashboardHelp id="help-execution" text="Estimativa baseada nas datas das etapas-pai do Cronograma: não iniciada, em andamento ou concluída." />
-          <span>EXECUÇÃO APROXIMADA</span>
+          <DashboardHelp id="help-execution" text="Percentual calculado pelas subetapas concluídas, ponderadas pela duração prevista. Uma subetapa só é concluída quando a data real de fim está registrada." />
+          <span>EXECUÇÃO DA OBRA</span>
           <strong>{Math.round(progress)}%</strong>
           <div className="overview-progress-track"><i style={{ width: `${progress}%` }} /></div>
-          <p>{indicadores.etapas_concluidas} etapas concluídas · {indicadores.etapas_em_andamento} em andamento</p>
+          <p>{indicadores.subetapas_concluidas} subetapas concluídas · {indicadores.subetapas_em_andamento} em andamento</p>
         </div>
       </article>
     </section>
 
     <section className="overview-level">
-      <FinancialScenario eyebrow="SITUAÇÃO ATÉ HOJE" title="Financeiro atual" budgetLabel="Orçamento atual" budget={currentBudget} totalPaid={totalPayments} help="O Orçamento Atual soma entradas do Fluxo de Caixa com data até hoje. O saldo desconta o Total de Pagamentos." helpId="help-current-finance" />
+      <div className="cash-flow-summary-heading overview-future-toggle"><div><strong>{includeFuture?'Com provisão':'Sem provisão'}</strong><span>{includeFuture?'Inclui valores com data futura.':'Considera somente lançamentos até hoje.'}</span></div><label className="future-toggle" title="Ao ativar, inclui lançamentos com data posterior a hoje: valores previstos para entrar ou sair do caixa da obra."><input type="checkbox" checked={includeFuture} onChange={event=>setIncludeFuture(event.target.checked)}/><span>Mostrar lançamentos futuros?</span></label></div>
+      <FinancialScenario eyebrow={includeFuture?'VISÃO COM PROVISÃO':'SITUAÇÃO ATÉ HOJE'} title={includeFuture?'Financeiro atual + provisionado':'Financeiro atual'} budgetLabel={includeFuture?'Orçamento atual + provisionado':'Orçamento atual'} budget={financialBudget} totalPaid={totalPayments} help={includeFuture?'Inclui todas as entradas do Fluxo de Caixa, inclusive lançamentos futuros. O saldo desconta o Total de Pagamentos.':'O Orçamento Atual soma entradas do Fluxo de Caixa com data até hoje. O saldo desconta o Total de Pagamentos.'} helpId="help-financial-scenario" provisioned={includeFuture} />
     </section>
 
-    <section className="overview-level">
-      <FinancialScenario eyebrow="VISÃO COM PROVISÃO" title="Financeiro atual + provisionado" budgetLabel="Orçamento atual + provisionado" budget={provisionedBudget} totalPaid={totalPayments} help="Inclui todas as entradas do Fluxo de Caixa, inclusive lançamentos futuros. O saldo desconta o Total de Pagamentos." helpId="help-provisioned-finance" provisioned />
+    <section className="overview-level initial-budget-section">
+      <div className="overview-section-title"><span>ORÇAMENTO INICIAL</span><h2>Pagamentos versus Orçamento Inicial</h2></div>
+      <div className="initial-budget-grid">
+        <InitialBudgetCard title="Total da obra" description="Mão de obra, Materiais, Frete, Documentação e Outros" budget={Number(indicadores.orcamento_inicial_total)} spent={totalPayments} tone="total"/>
+        <InitialBudgetCard title="Mão de obra" description="Despesas classificadas como Mão de obra" budget={Number(indicadores.orcamento_mao_obra)} spent={Number(indicadores.gasto_mao_obra)} tone="labor"/>
+        <InitialBudgetCard title="Materiais" description="Inclui Materiais, Frete, Documentação e Outros" budget={Number(indicadores.orcamento_materiais)} spent={Number(indicadores.gasto_materiais_e_demais_categorias)} tone="materials"/>
+      </div>
     </section>
 
     <section className="overview-level overview-payment-analysis">
       <div className="overview-section-title"><span>ANÁLISE DOS PAGAMENTOS</span><h2>Como os recursos foram utilizados</h2></div>
       <div className="overview-payment-grid">
-        <article className="overview-total-payments">
-          <DashboardHelp id="help-total-payments" text="Soma somente pagamentos nos status Pago - Aguardando Entrega e Concluído." />
-          <span>TOTAL DE PAGAMENTOS</span><strong>{formatMoney(totalPayments)}</strong><small>Valores efetivamente pagos</small>
-        </article>
-
         <article className="dashboard-panel overview-distribution-panel">
           <DashboardPanelHeader eyebrow="DISTRIBUIÇÃO DOS GASTOS" title="Pagamentos por etapa" help="Agrupa pagamentos efetivos pela etapa-pai do Cronograma vinculada a cada pagamento." helpId="help-distribution" />
           {distribution.length ? <div className="overview-distribution-content">
@@ -229,17 +263,25 @@ export function ProjectDashboardPage() {
           </div> : <EmptyState title="Sem pagamentos distribuídos" description="Os pagamentos efetivos aparecerão agrupados por etapa." />}
         </article>
 
+        <article className="dashboard-panel overview-distribution-panel overview-category-panel">
+          <DashboardPanelHeader eyebrow="DISTRIBUIÇÃO POR CATEGORIA" title="Pagamentos por Categoria" help="Compara os pagamentos efetivos por categoria, incluindo Mão de obra, Material de construção, Documentação, Frete e Outros." helpId="help-category-distribution" />
+          {categoryDistribution.length ? <div className="overview-distribution-content">
+            <ResponsiveContainer width="100%" height={220}><PieChart><Pie data={categoryDistribution} dataKey="value" nameKey="name" innerRadius={55} outerRadius={84} paddingAngle={2} stroke="none">{categoryDistribution.map((item) => <Cell key={item.name} fill={item.color} />)}</Pie><RechartsTooltip formatter={(value) => formatMoney(Number(value))} /></PieChart></ResponsiveContainer>
+            <DonutLegend items={categoryDistribution} totalValue={totalPayments} />
+          </div> : <EmptyState title="Sem pagamentos categorizados" description="Classifique as despesas para visualizar a distribuição entre mão de obra e materiais." />}
+        </article>
+
         <article className="dashboard-panel overview-supplier-panel">
           <DashboardPanelHeader eyebrow="CONCENTRAÇÃO DOS PAGAMENTOS" title="Pagamentos por fornecedor" help="Soma os pagamentos efetivos por fornecedor, para identificar quem recebeu os maiores valores." helpId="help-suppliers" />
           {supplierPayments.length ? <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={supplierPayments} layout="vertical" margin={{ top: 8, right: 18, left: 0, bottom: 8 }}><CartesianGrid stroke="#e7e4dc" horizontal={false} /><XAxis type="number" tickFormatter={(value) => `${Math.round(Number(value) / 1000)} mil`} tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: '#8b8f8c' }} /><YAxis type="category" dataKey="fornecedor" width={120} tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: '#747975' }} /><RechartsTooltip formatter={(value) => [formatMoney(Number(value)), 'Total pago']} /><Bar dataKey="total" name="Total pago" fill={PAYMENT_COLOR} radius={[0, 3, 3, 0]} maxBarSize={28} /></BarChart>
+            <BarChart data={supplierPayments} layout="vertical" margin={{ top: 8, right: 18, left: 0, bottom: 8 }}><CartesianGrid stroke="#e7e4dc" horizontal={false} /><XAxis type="number" tickFormatter={(value) => `${Math.round(Number(value) / 1000)} mil`} tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: '#8b8f8c' }} /><YAxis type="category" dataKey="fornecedor" width={120} tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: '#747975' }} /><RechartsTooltip formatter={(value) => [formatMoney(Number(value)), 'Total pago']} /><Bar dataKey="total" name="Total pago" radius={[0, 3, 3, 0]} maxBarSize={28}>{supplierPayments.map(item=><Cell key={item.fornecedor} fill={item.color}/>)}</Bar></BarChart>
           </ResponsiveContainer> : <EmptyState title="Sem pagamentos por fornecedor" description="Os fornecedores aparecerão quando houver pagamentos efetivos registrados." />}
         </article>
 
         <article className="dashboard-panel overview-monthly-panel">
           <DashboardPanelHeader eyebrow="EVOLUÇÃO DOS PAGAMENTOS" title="Pagamentos por mês/ano" help="Soma os pagamentos efetivos pela data de pagamento e mantém os meses em sequência cronológica." helpId="help-monthly" />
           {monthlyPayments.length ? <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={monthlyPayments} margin={{ top: 16, right: 10, left: 6, bottom: 8 }}><CartesianGrid stroke="#e7e4dc" vertical={false} /><XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: '#747975' }} interval="preserveStartEnd" /><YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1000)} mil`} tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: '#8b8f8c' }} width={48} /><RechartsTooltip labelFormatter={(_, payload) => payload?.[0]?.payload?.label || ''} formatter={(value) => [formatMoney(Number(value)), 'Total pago']} /><Bar dataKey="total" name="Total pago" fill={PAYMENT_COLOR} radius={[3, 3, 0, 0]} maxBarSize={42} /></BarChart>
+            <BarChart data={monthlyPaymentsWithColors} margin={{ top: 16, right: 10, left: 6, bottom: 8 }}><CartesianGrid stroke="#e7e4dc" vertical={false} /><XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: '#747975' }} interval="preserveStartEnd" /><YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1000)} mil`} tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: '#8b8f8c' }} width={48} /><RechartsTooltip labelFormatter={(_, payload) => payload?.[0]?.payload?.label || ''} formatter={(value) => [formatMoney(Number(value)), 'Total pago']} /><Bar dataKey="total" name="Total pago" radius={[3, 3, 0, 0]} maxBarSize={42}>{monthlyPaymentsWithColors.map(item=><Cell key={item.mes} fill={item.color}/>)}</Bar></BarChart>
           </ResponsiveContainer> : <EmptyState title="Sem evolução mensal" description="Os pagamentos com data registrada formarão esta linha do tempo." />}
         </article>
       </div>

@@ -23,3 +23,14 @@ export const distributionChartColors = [
   chartPalette.bronze,
   chartPalette.moss,
 ] as const
+
+export const dashboardRankColors = [
+  chartPalette.sidebar,
+  chartPalette.bronze,
+  chartPalette.terracotta,
+  chartPalette.ochre,
+  '#737a75',
+  '#8b8f8c',
+  '#a6aaa6',
+  '#c2c5c1',
+] as const
