@@ -7,7 +7,7 @@ import { requireAuth } from '../../shared/auth.js'
 import { recordAudit } from '../../shared/audit.js'
 import { AppError } from '../../shared/errors.js'
 import { importExample } from '../../shared/import-examples.js'
-import { parseExpenseImport, applyExpenseImport } from '../despesas/expense-import.service.js'
+import { parseExpenseImport, applyExpenseImport, applyExpenseItemsImport, parseExpenseItemsImport } from '../despesas/expense-import.service.js'
 import { expenseItemTotalSql as itemTotalSql } from '../despesas/expense-financial.js'
 import { requireProjectPermission } from '../../shared/projectAccess.js'
 import { readStoredFile, removeStoredFile, safeDownloadName, saveUploadedFile } from '../../shared/storage.js'
@@ -22,11 +22,13 @@ import { linkSchema, moveItemSchema, moveItemsSchema, paymentSchema, paymentStat
 const paymentImportSchema = z.object({
   formato: z.enum(['TSV', 'JSON']), conteudo: z.string().min(2), modo: z.enum(['ACRESCENTAR', 'SUBSTITUIR']).optional(), nomeArquivo: z.string().max(255).optional(),
 })
+const expenseItemsImportSchema=z.object({formato:z.enum(['TSV','JSON']),conteudo:z.string().min(2)})
 
 const documentUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: env.maxUploadBytes, files: 1 } })
 const paymentDocumentSchema = z.object({
   titulo: z.string().trim().min(2).max(180),
   categoria: z.string().trim().min(2).max(40).default('OUTROS'),
+  tipo_documento_id: z.coerce.number().int().positive(),
   url: z.string().trim().max(4_000).optional().nullable().transform((value) => value || null),
 })
 
@@ -224,6 +226,22 @@ paymentsRouter.post('/despesas/:compraId/itens', requireProjectPermission('pagam
   res.status(201).json({item})
 })
 
+paymentsRouter.post('/despesas/:compraId/itens/importacao/preview', requireProjectPermission('pagamentos.inserir'), validateBody(expenseItemsImportSchema), async(req,res)=>{
+  res.json(parseExpenseItemsImport(req.body.formato,req.body.conteudo))
+})
+
+paymentsRouter.post('/despesas/:compraId/itens/importacao/confirmar', requireProjectPermission('pagamentos.inserir'), validateBody(expenseItemsImportSchema), async(req,res)=>{
+  const parsed=parseExpenseItemsImport(req.body.formato,req.body.conteudo)
+  if(parsed.erros.length)throw new AppError(422,'Corrija os campos indicados antes de importar.','IMPORTACAO_INVALIDA',parsed.erros)
+  const purchaseId=z.coerce.number().int().positive().parse(req.params.compraId)
+  const counts=await withTransaction(async client=>{
+    const result=await applyExpenseItemsImport(client,req.acessoProjeto!.projetoId,purchaseId,req.usuarioId!,parsed.registros)
+    await recordAudit(client,{projetoId:req.acessoProjeto!.projetoId,usuarioId:req.usuarioId!,acao:'ITENS_DESPESA_IMPORTADOS',entidade:'despesas',registroId:purchaseId,dadosNovos:result,enderecoIp:req.ip})
+    return result
+  })
+  res.status(201).json({quantidade:parsed.total,...counts})
+})
+
 paymentsRouter.put('/itens/:itemId', requireProjectPermission('pagamentos.atualizar'), validateBody(purchaseItemSchema), async(req,res)=>{
   const projectId=req.acessoProjeto!.projetoId;const itemId=Number(req.params.itemId)
   await withTransaction(async(client)=>{const before=await client.query('SELECT * FROM pagamentos WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL FOR UPDATE',[itemId,projectId]);if(!before.rows[0])throw new AppError(404,'Item não encontrado.','ITEM_NAO_ENCONTRADO');const manualTotal=req.body.valor_total!==null;const total=manualTotal?req.body.valor_total:req.body.valor_unitario===null?null:Number((Number(req.body.quantidade||1)*Number(req.body.valor_unitario)-Number(req.body.valor_desconto||0)).toFixed(2));await client.query(`UPDATE pagamentos SET descricao=$3,quantidade=$4,unidade=$5,observacao=$6,valor_unitario=$7,valor_desconto=$8,valor=$9,valor_total_manual=$10,ordem=$11 WHERE id=$1 AND projeto_id=$2`,[itemId,projectId,req.body.descricao,req.body.quantidade,req.body.unidade,req.body.observacao,req.body.valor_unitario,req.body.valor_desconto,total,manualTotal,req.body.ordem]);if(req.body.links_cotacao)await syncPaymentLinks(client,itemId,req.body.links_cotacao,req.usuarioId!);await recordAudit(client,{projetoId:projectId,usuarioId:req.usuarioId!,acao:'ITEM_COMPRA_ATUALIZADO',entidade:'pagamentos',registroId:itemId,dadosAnteriores:before.rows[0],dadosNovos:req.body,enderecoIp:req.ip})})
@@ -349,8 +367,9 @@ paymentsRouter.post('/importacao/confirmar', requireProjectPermission('pagamento
 })
 
 paymentsRouter.get('/despesas/:compraId/documentos', requireProjectPermission('documentos.visualizar'), async(req,res)=>{
-  const {rows}=await query(`SELECT d.id,d.compra_id,d.titulo,d.categoria,d.tipo_origem,d.url,d.nome_original,d.tipo_mime,d.criado_em
-    FROM documentos_projeto d JOIN despesas c ON c.id=d.compra_id
+  const {rows}=await query(`SELECT d.id,d.compra_id,d.titulo,d.categoria,d.tipo_documento_id,td.nome AS tipo_documento_nome,d.tipo_origem,d.url,d.nome_original,d.tipo_mime,d.criado_em,
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('id',cat.id,'nome',cat.nome) ORDER BY cat.nome) FROM documentos_projeto_categorias dc JOIN categorias_documento cat ON cat.id=dc.categoria_id WHERE dc.documento_id=d.id),'[]'::jsonb) AS categorias
+    FROM documentos_projeto d JOIN despesas c ON c.id=d.compra_id JOIN tipos_documento td ON td.id=d.tipo_documento_id
     WHERE c.id=$1 AND c.projeto_id=$2 AND c.excluido_em IS NULL AND d.excluido_em IS NULL ORDER BY d.criado_em DESC`,[Number(req.params.compraId),req.acessoProjeto!.projetoId])
   res.json({documentos:rows})
 })
@@ -365,13 +384,22 @@ paymentsRouter.post('/despesas/:compraId/documentos', requireProjectPermission('
   const stored=req.file?await saveUploadedFile(projectId,'compras',req.file):null;const url=input.url?validateHttpUrl(input.url):null
   try {
     const document=await withTransaction(async(client)=>{const {rows}=await client.query(`INSERT INTO documentos_projeto
-      (projeto_id,compra_id,titulo,categoria,tipo_origem,url,caminho_arquivo,nome_original,tipo_mime,criado_por)
-      VALUES ($1,$2,$3,'Despesas',$4,$5,$6,$7,$8,$9) RETURNING *`,[projectId,purchaseId,input.titulo,stored?'ARQUIVO':'LINK',url,stored?.relativePath,stored?.originalName,stored?.mimeType,req.usuarioId]);await assignDocumentCategoryByName(client,rows[0]!.id,projectId,'Despesas');return rows[0]!})
+      (projeto_id,compra_id,titulo,categoria,tipo_documento_id,tipo_origem,url,caminho_arquivo,nome_original,tipo_mime,criado_por)
+      SELECT $1,$2,$3,'Despesas',$4,$5,$6,$7,$8,$9,$10 WHERE EXISTS (SELECT 1 FROM tipos_documento WHERE id=$4 AND projeto_id=$1 AND excluido_em IS NULL) RETURNING *`,[projectId,purchaseId,input.titulo,input.tipo_documento_id,stored?'ARQUIVO':'LINK',url,stored?.relativePath,stored?.originalName,stored?.mimeType,req.usuarioId]);if(!rows[0])throw new AppError(422,'Selecione um tipo de documento ativo do projeto.','TIPO_DOCUMENTO_INVALIDO');await assignDocumentCategoryByName(client,rows[0]!.id,projectId,'Despesas');return rows[0]!})
     res.status(201).json({documento:document})
   } catch(error) {
     await removeStoredFile(stored?.relativePath||null)
     throw error
   }
+})
+
+paymentsRouter.put('/despesas/:compraId/documentos/:documentoId', requireProjectPermission('documentos.atualizar'), documentUpload.single('arquivo'), async(req,res)=>{
+  const purchaseId=Number(req.params.compraId);const projectId=req.acessoProjeto!.projetoId;const input=paymentDocumentSchema.parse(req.body)
+  if(req.file&&input.url)throw new AppError(422,'Escolha arquivo ou link, não ambos.','FONTE_DUPLICADA')
+  const before=await query<{caminho_arquivo:string|null;url:string|null;tipo_origem:'ARQUIVO'|'LINK'}>(`SELECT d.caminho_arquivo,d.url,d.tipo_origem FROM documentos_projeto d JOIN despesas c ON c.id=d.compra_id WHERE d.id=$1 AND c.id=$2 AND c.projeto_id=$3 AND d.excluido_em IS NULL`,[Number(req.params.documentoId),purchaseId,projectId])
+  if(!before.rows[0])throw new AppError(404,'Documento não encontrado.','DOCUMENTO_NAO_ENCONTRADO')
+  const stored=req.file?await saveUploadedFile(projectId,'compras',req.file):null
+  try { const url=input.url?validateHttpUrl(input.url):null;const replacing=Boolean(stored||url);const current=before.rows[0]!;const {rows}=await query(`UPDATE documentos_projeto SET titulo=$4,tipo_documento_id=$5,tipo_origem=$6,url=$7,caminho_arquivo=$8,nome_original=COALESCE($9,nome_original),tipo_mime=COALESCE($10,tipo_mime) WHERE id=$1 AND compra_id=$2 AND projeto_id=$3 AND excluido_em IS NULL AND EXISTS (SELECT 1 FROM tipos_documento WHERE id=$5 AND projeto_id=$3 AND excluido_em IS NULL) RETURNING *`,[Number(req.params.documentoId),purchaseId,projectId,input.titulo,input.tipo_documento_id,replacing?(stored?'ARQUIVO':'LINK'):current.tipo_origem,replacing?url:current.url,replacing?(stored?.relativePath||null):current.caminho_arquivo,stored?.originalName,stored?.mimeType]);if(!rows[0])throw new AppError(422,'Selecione um tipo de documento ativo do projeto.','TIPO_DOCUMENTO_INVALIDO');if(replacing)await removeStoredFile(current.caminho_arquivo);res.json({documento:rows[0]}) } catch(error) { await removeStoredFile(stored?.relativePath||null);throw error }
 })
 
 paymentsRouter.get('/despesas/:compraId/documentos/:documentoId/arquivo', requireProjectPermission('documentos.visualizar'), async(req,res)=>{
@@ -383,8 +411,8 @@ paymentsRouter.delete('/despesas/:compraId/documentos/:documentoId', requireProj
 
 paymentsRouter.get('/:pagamentoId/documentos', requireProjectPermission('documentos.visualizar'), async (req, res) => {
   const paymentId=Number(req.params.pagamentoId)
-  const [documents,item] = await Promise.all([query(`SELECT d.id,d.pagamento_id,d.titulo,d.categoria,d.tipo_origem,d.url,d.nome_original,d.tipo_mime,d.criado_em
-    FROM documentos_projeto d JOIN pagamentos p ON p.id=d.pagamento_id
+  const [documents,item] = await Promise.all([query(`SELECT d.id,d.pagamento_id,d.titulo,d.categoria,d.tipo_documento_id,td.nome AS tipo_documento_nome,d.tipo_origem,d.url,d.nome_original,d.tipo_mime,d.criado_em
+    FROM documentos_projeto d JOIN pagamentos p ON p.id=d.pagamento_id JOIN tipos_documento td ON td.id=d.tipo_documento_id
     WHERE p.id=$1 AND p.projeto_id=$2 AND d.excluido_em IS NULL ORDER BY d.criado_em DESC`, [paymentId, req.acessoProjeto!.projetoId]),
   query<{documentos_legados_habilitados:boolean}>('SELECT documentos_legados_habilitados FROM pagamentos WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL',[paymentId,req.acessoProjeto!.projetoId])])
   res.json({ documentos: documents.rows, documentos_legados_habilitados:item.rows[0]?.documentos_legados_habilitados??false })
@@ -403,8 +431,8 @@ paymentsRouter.post('/:pagamentoId/documentos', requireProjectPermission('docume
   const url = input.url ? validateHttpUrl(input.url) : null
   const document = await withTransaction(async (client) => {
     const { rows } = await client.query(`INSERT INTO documentos_projeto
-    (projeto_id,pagamento_id,titulo,categoria,tipo_origem,url,caminho_arquivo,nome_original,tipo_mime,criado_por)
-      VALUES ($1,$2,$3,'Despesas',$4,$5,$6,$7,$8,$9) RETURNING *`, [req.acessoProjeto!.projetoId,paymentId,input.titulo,stored?'ARQUIVO':'LINK',url,stored?.relativePath,stored?.originalName,stored?.mimeType,req.usuarioId])
+    (projeto_id,pagamento_id,titulo,categoria,tipo_documento_id,tipo_origem,url,caminho_arquivo,nome_original,tipo_mime,criado_por)
+      SELECT $1,$2,$3,'Despesas',$4,$5,$6,$7,$8,$9,$10 WHERE EXISTS (SELECT 1 FROM tipos_documento WHERE id=$4 AND projeto_id=$1 AND excluido_em IS NULL) RETURNING *`, [req.acessoProjeto!.projetoId,paymentId,input.titulo,input.tipo_documento_id,stored?'ARQUIVO':'LINK',url,stored?.relativePath,stored?.originalName,stored?.mimeType,req.usuarioId])
     await assignDocumentCategoryByName(client, rows[0]!.id, req.acessoProjeto!.projetoId, 'Despesas')
     return rows[0]!
   })

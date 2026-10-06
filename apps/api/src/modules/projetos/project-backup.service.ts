@@ -145,6 +145,8 @@ export async function importProjectBackup(userId: number, backupFile: ProjectBac
           VALUES ($1,$2,$3) RETURNING id`, [newProject.id,category.nome,userId])
         categoryIds.set(category.old_id,result.rows[0]!.id)
       }
+      await client.query(`INSERT INTO tipos_documento (projeto_id,nome,criado_por) VALUES
+        ($1,'Contrato',$2),($1,'Orçamento',$2),($1,'Nota Fiscal',$2),($1,'Comprovante',$2),($1,'Documento Técnico',$2),($1,'Outros',$2)`, [newProject.id,userId])
 
       const stageIds = new Map<number, number>()
       let pending = [...backup.modules.cronograma]
@@ -209,8 +211,8 @@ export async function importProjectBackup(userId: number, backupFile: ProjectBac
           createdFiles.push(stored.relativePath)
         }
         const result = await client.query<{ id: number }>(`INSERT INTO documentos_projeto
-          (projeto_id,compra_id,titulo,categoria,descricao,tipo_origem,url,caminho_arquivo,nome_original,tipo_mime,criado_por,criado_em)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`, [newProject.id,
+          (projeto_id,compra_id,titulo,categoria,tipo_documento_id,descricao,tipo_origem,url,caminho_arquivo,nome_original,tipo_mime,criado_por,criado_em)
+          SELECT $1,$2,$3,$4,id,$5,$6,$7,$8,$9,$10,$11,$12 FROM tipos_documento WHERE projeto_id=$1 AND lower(nome)=lower('Outros') AND excluido_em IS NULL RETURNING id`, [newProject.id,
           mapped(purchaseIds,document.despesa_old_id,'Despesa do documento'),document.titulo,document.despesa_old_id?'Despesas':'OUTROS',document.descricao,
           document.tipo_origem,document.url,stored?.relativePath||null,stored?.originalName||document.nome_original,
           stored?.mimeType||document.tipo_mime,userId,document.criado_em])

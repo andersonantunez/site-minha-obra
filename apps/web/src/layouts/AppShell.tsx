@@ -27,6 +27,7 @@ const navigation: { group?: string; items: { label: string; icon: typeof LayoutD
   ] },
   { group: 'PROJETO', items: [
     { label: 'Categorias', icon: Tags, path: 'categorias-documentos', permission: 'categorias.visualizar' },
+    { label: 'Tipos de documento', icon: Tags, path: 'tipos-documento', permission: 'categorias.visualizar' },
     { label: 'Documentos', icon: FileText, path: 'documentos', permission: 'documentos.visualizar' },
   ] },
   { group: 'GESTÃO', items: [

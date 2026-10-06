@@ -79,7 +79,7 @@ const expensePdfParentColumns=[
  {label:'Categoria',index:2,width:105,align:'center' as const},
  {label:'Status',index:3,width:125,align:'center' as const,badge:'status' as const},
  {label:'Fornecedor',index:4,width:95,align:'left' as const,verticalAlign:'middle' as const},
- {label:'Data do pagamento',index:5,width:95,align:'left' as const,verticalAlign:'middle' as const},
+ {label:'Data do pagamento',index:5,width:95,align:'center' as const,verticalAlign:'middle' as const},
  {label:'Valor total',index:6,width:65,align:'right' as const,verticalAlign:'middle' as const},
 ]
 export function createExpensePdf(_projectId:number, report:ExpenseReport) {
@@ -95,7 +95,7 @@ export function createExpensePdf(_projectId:number, report:ExpenseReport) {
    ...(column.badge==='status'?{badgeColor:r=>PAYMENT_STATUS_COLORS[r.expense.status],badgeTextColor:r=>reportContrastColor(PAYMENT_STATUS_COLORS[r.expense.status])}:{ }),
   })),{parent:()=>true})
   pdf.font('Helvetica-Bold').fontSize(9).fillColor('#737a75').text('Itens da Despesa',36,pdf.y+12);pdf.y+=8
-  pdfTable(pdf,block.items,itemLabels.map((label,i)=>({label,width:[280,80,65,115,115,115][i]!,value:r=>i>=3?reportMoney(r[i]??null,i===3?4:2):i===1&&r[i]!==null?Number(r[i]).toLocaleString('pt-BR'):String(r[i]||'—'),align:i===1?'center' as const:i>=3?'right' as const:'left' as const,verticalAlign:i===1?'middle' as const:undefined})),{secondary:true})
+  pdfTable(pdf,block.items,itemLabels.map((label,i)=>({label,width:[280,80,65,115,115,115][i]!,value:r=>i>=3?reportMoney(r[i]??null,i===3?4:2):i===1&&r[i]!==null?Number(r[i]).toLocaleString('pt-BR'):String(r[i]||'—'),align:i===1||i===2?'center' as const:i>=3?'right' as const:'left' as const,verticalAlign:i===1||i===2?'middle' as const:undefined})),{secondary:true})
   pdf.y+=18
  }
  if(!report.despesas.length)pdfTable(pdf,[],[{label:'Despesas',width:770,value:()=>''}])

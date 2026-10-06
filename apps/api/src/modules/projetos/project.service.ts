@@ -4,6 +4,7 @@ import { recordAudit } from '../../shared/audit.js'
 import { AppError } from '../../shared/errors.js'
 import type { z } from 'zod'
 import type { projectInputSchema } from './project.schemas.js'
+import { projectExecutionPercentage } from '../etapas/stage-query.js'
 
 type ProjectInput = z.infer<typeof projectInputSchema>
 
@@ -36,6 +37,8 @@ export async function createProject(userId: number, input: ProjectInput, ip?: st
       ($1,'Planta Elétrica',$2),($1,'Planta Estrutural',$2),($1,'Liberação Prefeitura',$2),
       ($1,'Contrato',$2),($1,'Unificação dos Terrenos',$2),($1,'Consórcio',$2),($1,'INSS Obras',$2),
       ($1,'Financiamento Caixa',$2),($1,'Consórcio Sicredi',$2),($1,'Outros',$2)`, [projectId,userId])
+    await client.query(`INSERT INTO tipos_documento (projeto_id,nome,criado_por) VALUES
+      ($1,'Contrato',$2),($1,'Orçamento',$2),($1,'Nota Fiscal',$2),($1,'Comprovante',$2),($1,'Documento Técnico',$2),($1,'Outros',$2)`, [projectId,userId])
     await recordAudit(client, { projetoId: projectId, usuarioId: userId, acao: 'PROJETO_CRIADO', entidade: 'projetos', registroId: projectId, dadosNovos: input, enderecoIp: ip })
     return getProjectById(client, projectId)
   })
@@ -55,9 +58,7 @@ export async function listUserProjects(userId: number, status: 'ATIVOS' | 'ARQUI
     p.area_construida,CASE WHEN usuario_eh_administrador_sistema(acesso.id) THEN 'ADMINISTRADOR_SISTEMA' ELSE pa.codigo END AS papel,
     (p.proprietario_usuario_id=$1) AS proprietario,
     presentation.id AS imagem_apresentacao_id,presentation.url AS imagem_apresentacao_url,
-    COALESCE((SELECT ROUND(AVG(CASE WHEN e.data_fim IS NOT NULL AND e.data_fim <= CURRENT_DATE THEN 100
-      WHEN e.data_inicio IS NOT NULL AND e.data_inicio <= CURRENT_DATE THEN 50 ELSE 0 END)) FROM cronogramas e
-      WHERE e.projeto_id=p.id AND e.excluido_em IS NULL),0) AS percentual_andamento
+    ${projectExecutionPercentage('p.id')} AS percentual_andamento
     FROM usuarios acesso
     JOIN projetos p ON p.excluido_em IS NULL
     LEFT JOIN membros_projeto mp ON mp.projeto_id=p.id AND mp.usuario_id=$1 AND mp.ativo

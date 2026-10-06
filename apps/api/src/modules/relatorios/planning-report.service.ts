@@ -7,7 +7,8 @@ import { getSchedule, type ScheduleRow } from '../etapas/schedule.service.js'
 import { reportMoney as formatMoney, reportDate as formatDate, spreadsheetDate as excelDate, styleReportSheet } from '../../shared/report.js'
 
 type Project = { nome: string; endereco?:string|null; cep?:string|null; logradouro?:string|null; numero?:string|null; complemento?:string|null; bairro?:string|null; cidade: string | null; estado: string | null; latitude?:string|null; longitude?:string|null }
-type CashFlowReportRow = { origem_id:number; fornecedor:string|null; data:string; descricao:string; detalhes:string|null; valor:string; provisionado:boolean; origem:string }
+type CashFlowReportRow = { origem_id:number; fornecedor:string|null; categoria:string|null; data:string; descricao:string; detalhes:string|null; valor:string; provisionado:boolean; origem:string }
+const cashFlowCategoryLabels:Record<string,string>={MAO_DE_OBRA:'Mão de obra',MATERIAL_CONSTRUCAO:'Material de construção',DOCUMENTACAO:'Documentação',FRETE:'Frete',OUTROS:'Outros'}
 
 async function getProject(projectId: number) {
   const result = await query<Project>('SELECT nome,endereco,cep,logradouro,numero,complemento,bairro,cidade,estado,latitude,longitude FROM projetos WHERE id=$1 AND excluido_em IS NULL',[projectId])
@@ -20,7 +21,7 @@ export async function getCashFlowReport(projectId: number, filters: CashFlowFilt
     getProject(projectId),
     getCashFlowData(projectId,filters),
   ])
-  const rows:CashFlowReportRow[]=data.itens.map(({origem_id,fornecedor,data,descricao,detalhes,valor,provisionado,origem})=>({origem_id,fornecedor,data,descricao,detalhes,valor,provisionado,origem}))
+  const rows:CashFlowReportRow[]=data.itens.map(({origem_id,fornecedor,categoria,data,descricao,detalhes,valor,provisionado,origem})=>({origem_id,fornecedor,categoria:categoria?cashFlowCategoryLabels[categoria]||categoria:null,data,descricao,detalhes,valor,provisionado,origem}))
   return { projectId, project, rows }
 }
 
@@ -51,9 +52,10 @@ export function createCashFlowPdf(report: Awaited<ReturnType<typeof getCashFlowR
  ])
  pdfTable(pdf,report.rows,[
  {label:'Data',width:75,value:r=>formatDate(r.data),align:'center',verticalAlign:'middle'},
- {label:'Descrição',width:310,value:r=>r.descricao},
- {label:'Fornecedor',width:170,value:r=>r.fornecedor||'—'},
- {label:'Valor',width:120,value:r=>formatMoney(r.valor),align:'right'},
+ {label:'Descrição',width:250,value:r=>r.descricao},
+ {label:'Fornecedor',width:130,value:r=>r.fornecedor||'—'},
+ {label:'Categoria',width:105,value:r=>r.categoria||'—'},
+ {label:'Valor',width:110,value:r=>formatMoney(r.valor),align:'right'},
  {label:'Provisionado',width:95,value:r=>r.provisionado?'Sim':'Não',align:'center'}])
  pdfReportTotal(pdf,'Total do Fluxo de Caixa',formatMoney(report.rows.reduce((total,row)=>total+Number(row.valor),0)))
  return finishReportPdf(pdf)
@@ -98,7 +100,7 @@ export async function createCashFlowWorkbook(report: Awaited<ReturnType<typeof g
   const sheet=workbook.addWorksheet('Fluxo de Caixa',{views:[{state:'frozen',ySplit:1}]})
   sheet.columns=[{header:'Data',key:'data',width:14},{header:'Descrição',key:'descricao',width:50},{header:'Fornecedor',key:'fornecedor',width:32},{header:'Valor',key:'valor',width:20},{header:'Provisionado',key:'provisionado',width:16}]
   for(const row of report.rows)sheet.addRow({...row,data:excelDate(row.data),valor:Number(row.valor),provisionado:row.provisionado?'Sim':'Não'})
-  sheet.getColumn('data').numFmt='dd/mm/yyyy';sheet.getColumn('valor').numFmt='R$ #,##0.00;[Red]-R$ #,##0.00';styleReportSheet(sheet)
+  sheet.getColumn('data').numFmt='dd/mm/yyyy';sheet.getColumn('data').alignment={horizontal:'center',vertical:'middle'};sheet.getColumn('valor').numFmt='R$ #,##0.00;[Red]-R$ #,##0.00';styleReportSheet(sheet)
   const total=sheet.addRow({descricao:'Total do Fluxo de Caixa',valor:report.rows.reduce((sum,row)=>sum+Number(row.valor),0)})
   total.font={bold:true};total.getCell('valor').numFmt='R$ #,##0.00'
   return workbook.xlsx.writeBuffer()

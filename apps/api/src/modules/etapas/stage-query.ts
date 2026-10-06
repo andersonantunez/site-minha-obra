@@ -19,3 +19,13 @@ export function activeScheduleStageOrder(alias = 'c') {
     CASE WHEN ${alias}.parent_id IS NULL THEN 0 ELSE 1 END,
     ${alias}.ordem,${alias}.id`
 }
+
+/**
+ * Progresso efetivo da obra pelas subetapas: apenas fins reais concluídos
+ * contam, ponderados pela duração prevista de cada atividade.
+ */
+export function projectExecutionPercentage(projectIdSql: string) {
+  return `COALESCE((SELECT ROUND(100 * COALESCE(SUM(peso) FILTER (WHERE data_fim IS NOT NULL AND data_fim<=CURRENT_DATE),0) / NULLIF(SUM(peso),0),0)
+    FROM (SELECT data_fim,GREATEST(1,COALESCE(data_fim_previsto-data_inicio_previsto+1,1))::numeric AS peso FROM cronogramas
+      WHERE projeto_id=${projectIdSql} AND parent_id IS NOT NULL AND excluido_em IS NULL) AS subetapas),0)`
+}

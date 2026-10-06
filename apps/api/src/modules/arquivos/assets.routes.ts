@@ -16,11 +16,14 @@ const categoryIds = z.preprocess((value) => {
   if (typeof value !== 'string') return value
   try { return JSON.parse(value) } catch { return value }
 }, z.array(z.coerce.number().int().positive()).min(1).max(50).refine((ids) => new Set(ids).size === ids.length, 'Não repita uma categoria.'))
-const documentSchema = z.object({ titulo: z.string().trim().min(2).max(180), categoria_ids: categoryIds, descricao: textOrNull(4_000), url: textOrNull(4_000) })
+const documentSchema = z.object({ titulo: z.string().trim().min(2).max(180), categoria_ids: categoryIds, tipo_documento_id: z.coerce.number().int().positive(), compra_id: z.coerce.number().int().positive().optional(), descricao: textOrNull(4_000), url: textOrNull(4_000) })
 const categorySchema = z.object({ nome: z.string().trim().min(2).max(80) })
 
 async function listCategories(projectId: number) {
   return query('SELECT id,nome,criado_em FROM categorias_documento WHERE projeto_id=$1 AND excluido_em IS NULL ORDER BY nome', [projectId])
+}
+async function listDocumentTypes(projectId: number) {
+  return query('SELECT id,nome,criado_em FROM tipos_documento WHERE projeto_id=$1 AND excluido_em IS NULL ORDER BY nome', [projectId])
 }
 
 export const assetsRouter = Router({ mergeParams: true })
@@ -34,6 +37,49 @@ assetsRouter.get('/categorias', requireProjectPermission('categorias.visualizar'
 assetsRouter.get('/documentos/categorias', requireProjectPermission('documentos.visualizar'), async (req, res) => {
   const { rows } = await listCategories(req.acessoProjeto!.projetoId)
   res.json({ categorias: rows })
+})
+
+assetsRouter.get('/documentos/tipos', requireProjectPermission('documentos.visualizar'), async (req, res) => {
+  const { rows } = await listDocumentTypes(req.acessoProjeto!.projetoId)
+  res.json({ tipos: rows })
+})
+
+assetsRouter.get('/tipos-documento', requireProjectPermission('categorias.visualizar'), async (req, res) => {
+  const { rows } = await listDocumentTypes(req.acessoProjeto!.projetoId)
+  res.json({ tipos: rows })
+})
+
+assetsRouter.post('/tipos-documento', requireProjectPermission('categorias.inserir'), async (req, res) => {
+  const input = categorySchema.parse(req.body)
+  try {
+    const { rows } = await query('INSERT INTO tipos_documento (projeto_id,nome,criado_por) VALUES ($1,$2,$3) RETURNING id,nome,criado_em', [req.acessoProjeto!.projetoId, input.nome, req.usuarioId])
+    res.status(201).json({ tipo: rows[0] })
+  } catch (error: unknown) {
+    if ((error as { code?: string }).code === '23505') throw new AppError(409, 'Este tipo de documento já existe no projeto.', 'TIPO_DOCUMENTO_DUPLICADO')
+    throw error
+  }
+})
+
+assetsRouter.put('/tipos-documento/:tipoId', requireProjectPermission('categorias.atualizar'), async (req, res) => {
+  const input = categorySchema.parse(req.body)
+  try {
+    const { rows } = await query('UPDATE tipos_documento SET nome=$3 WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL RETURNING id,nome,criado_em', [Number(req.params.tipoId), req.acessoProjeto!.projetoId, input.nome])
+    if (!rows[0]) throw new AppError(404, 'Tipo de documento não encontrado.', 'TIPO_DOCUMENTO_NAO_ENCONTRADO')
+    res.json({ tipo: rows[0] })
+  } catch (error: unknown) {
+    if ((error as { code?: string }).code === '23505') throw new AppError(409, 'Este tipo de documento já existe no projeto.', 'TIPO_DOCUMENTO_DUPLICADO')
+    throw error
+  }
+})
+
+assetsRouter.delete('/tipos-documento/:tipoId', requireProjectPermission('categorias.excluir'), async (req, res) => {
+  const typeId = Number(req.params.tipoId)
+  const type = await query('SELECT 1 FROM tipos_documento WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL', [typeId, req.acessoProjeto!.projetoId])
+  if (!type.rowCount) throw new AppError(404, 'Tipo de documento não encontrado.', 'TIPO_DOCUMENTO_NAO_ENCONTRADO')
+  const used = await query('SELECT 1 FROM documentos_projeto WHERE tipo_documento_id=$1 AND projeto_id=$2 AND excluido_em IS NULL LIMIT 1', [typeId, req.acessoProjeto!.projetoId])
+  if (used.rowCount) throw new AppError(409, 'Este tipo possui documentos vinculados.', 'TIPO_DOCUMENTO_EM_USO')
+  await query('UPDATE tipos_documento SET excluido_em=NOW() WHERE id=$1 AND projeto_id=$2', [typeId, req.acessoProjeto!.projetoId])
+  res.status(204).end()
 })
 
 assetsRouter.post('/categorias', requireProjectPermission('categorias.inserir'), async (req, res) => {
@@ -81,16 +127,18 @@ assetsRouter.delete('/categorias/:categoriaId', requireProjectPermission('catego
 assetsRouter.get('/documentos', requireProjectPermission('documentos.visualizar'), async (req, res) => {
   const search = String(req.query.busca || '').trim()
   const categoryId = Number(req.query.categoriaId) || null
-  const { rows } = await query(`SELECT d.id,d.titulo,d.descricao,d.tipo_origem,d.url,d.caminho_arquivo,d.nome_original,d.tipo_mime,d.pagamento_id,d.compra_id,d.criado_em,
+  const typeId = Number(req.query.tipoId) || null
+  const { rows } = await query(`SELECT d.id,d.titulo,d.descricao,d.tipo_origem,d.url,d.caminho_arquivo,d.nome_original,d.tipo_mime,d.pagamento_id,d.compra_id,d.criado_em,d.tipo_documento_id,td.nome AS tipo_documento_nome,
       COALESCE(c.descricao,p.descricao) AS pagamento_descricao,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('id',c.id,'nome',c.nome) ORDER BY c.nome)
         FROM documentos_projeto_categorias dc JOIN categorias_documento c ON c.id=dc.categoria_id
         WHERE dc.documento_id=d.id AND c.excluido_em IS NULL),'[]'::jsonb) AS categorias
-    FROM documentos_projeto d LEFT JOIN pagamentos p ON p.id=d.pagamento_id LEFT JOIN despesas c ON c.id=d.compra_id
+    FROM documentos_projeto d JOIN tipos_documento td ON td.id=d.tipo_documento_id LEFT JOIN pagamentos p ON p.id=d.pagamento_id LEFT JOIN despesas c ON c.id=d.compra_id
     WHERE d.projeto_id=$1 AND d.excluido_em IS NULL AND ($2::bigint IS NULL OR EXISTS (
       SELECT 1 FROM documentos_projeto_categorias dc WHERE dc.documento_id=d.id AND dc.categoria_id=$2))
-      AND ($3='%%' OR d.titulo ILIKE $3 OR COALESCE(d.descricao,'') ILIKE $3 OR COALESCE(d.nome_original,'') ILIKE $3)
-    ORDER BY d.criado_em DESC,d.id DESC`, [req.acessoProjeto!.projetoId, categoryId, `%${search}%`])
+      AND ($3::bigint IS NULL OR d.tipo_documento_id=$3)
+      AND ($4='%%' OR d.titulo ILIKE $4 OR COALESCE(d.descricao,'') ILIKE $4 OR COALESCE(d.nome_original,'') ILIKE $4)
+    ORDER BY d.criado_em DESC,d.id DESC`, [req.acessoProjeto!.projetoId, categoryId, typeId, `%${search}%`])
   res.json({ documentos: rows })
 })
 
@@ -121,8 +169,8 @@ assetsRouter.post('/documentos/apresentacao', requireProjectPermission('configur
         return { documento: rows[0]!, previousPath: previous.rows[0].caminho_arquivo }
       }
       const { rows } = await client.query(`INSERT INTO documentos_projeto
-        (projeto_id,titulo,categoria,descricao,tipo_origem,caminho_arquivo,nome_original,tipo_mime,criado_por)
-        VALUES ($1,'Imagem de apresentação','Imagem de Apresentação','Imagem usada na apresentação do projeto','ARQUIVO',$2,$3,$4,$5) RETURNING *`, [req.acessoProjeto!.projetoId,stored.relativePath,stored.originalName,stored.mimeType,req.usuarioId])
+        (projeto_id,titulo,categoria,tipo_documento_id,descricao,tipo_origem,caminho_arquivo,nome_original,tipo_mime,criado_por)
+        SELECT $1,'Imagem de apresentação','Imagem de Apresentação',id,'Imagem usada na apresentação do projeto','ARQUIVO',$2,$3,$4,$5 FROM tipos_documento WHERE projeto_id=$1 AND lower(nome)=lower('Outros') AND excluido_em IS NULL RETURNING *`, [req.acessoProjeto!.projetoId,stored.relativePath,stored.originalName,stored.mimeType,req.usuarioId])
       await assignDocumentCategoryByName(client, rows[0]!.id, req.acessoProjeto!.projetoId, 'Imagem de Apresentação')
       return { documento: rows[0]!, previousPath: null }
     })
@@ -135,15 +183,20 @@ assetsRouter.post('/documentos', requireProjectPermission('documentos.inserir'),
   const input = documentSchema.parse(req.body)
   if (!req.file && !input.url) throw new AppError(422, 'Envie um arquivo ou informe um link.', 'FONTE_OBRIGATORIA')
   if (req.file && input.url) throw new AppError(422, 'Escolha arquivo ou link, não ambos.', 'FONTE_DUPLICADA')
+  if (input.compra_id) {
+    const expense = await query('SELECT 1 FROM despesas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL', [input.compra_id, req.acessoProjeto!.projetoId])
+    if (!expense.rowCount) throw new AppError(422, 'A despesa informada não pertence ao projeto.', 'DESPESA_INVALIDA')
+  }
   const stored = req.file ? await saveUploadedFile(req.acessoProjeto!.projetoId, 'documentos', req.file) : null
   try {
     const url = input.url ? validateHttpUrl(input.url) : null
     const document = await withTransaction(async (client) => {
-      const { rows } = await client.query(`INSERT INTO documentos_projeto (projeto_id,titulo,categoria,descricao,tipo_origem,url,caminho_arquivo,nome_original,tipo_mime,criado_por)
-        SELECT $1,$2,c.nome,$3,$4,$5,$6,$7,$8,$9 FROM categorias_documento c WHERE c.id=$10
-        RETURNING *`, [req.acessoProjeto!.projetoId,input.titulo,input.descricao,stored ? 'ARQUIVO' : 'LINK',url,stored?.relativePath,stored?.originalName,stored?.mimeType,req.usuarioId,input.categoria_ids[0]])
+      const { rows } = await client.query(`INSERT INTO documentos_projeto (projeto_id,compra_id,titulo,categoria,tipo_documento_id,descricao,tipo_origem,url,caminho_arquivo,nome_original,tipo_mime,criado_por)
+        SELECT $1,$2,$3,c.nome,$4,$5,$6,$7,$8,$9,$10,$11 FROM categorias_documento c JOIN tipos_documento td ON td.id=$12 AND td.projeto_id=$1 AND td.excluido_em IS NULL WHERE c.id=$13
+        RETURNING *`, [req.acessoProjeto!.projetoId,input.compra_id || null,input.titulo,input.tipo_documento_id,input.descricao,stored ? 'ARQUIVO' : 'LINK',url,stored?.relativePath,stored?.originalName,stored?.mimeType,req.usuarioId,input.tipo_documento_id,input.categoria_ids[0]])
       if (!rows[0]) throw new AppError(422, 'Selecione uma categoria ativa do projeto.', 'CATEGORIA_DOCUMENTO_INVALIDA')
       await replaceDocumentCategories(client, rows[0].id, req.acessoProjeto!.projetoId, input.categoria_ids)
+      if (input.compra_id) await assignDocumentCategoryByName(client, rows[0].id, req.acessoProjeto!.projetoId, 'Despesas')
       return rows[0]
     })
     res.status(201).json({ documento: document })
@@ -153,7 +206,7 @@ assetsRouter.post('/documentos', requireProjectPermission('documentos.inserir'),
 assetsRouter.put('/documentos/:documentoId', requireProjectPermission('documentos.atualizar'), upload.single('arquivo'), async (req, res) => {
   const input = documentSchema.parse(req.body)
   if (req.file && input.url) throw new AppError(422, 'Escolha arquivo ou link, não ambos.', 'FONTE_DUPLICADA')
-  const before = await query<{ caminho_arquivo: string | null; url: string | null; tipo_origem: string }>('SELECT caminho_arquivo,url,tipo_origem FROM documentos_projeto WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL', [Number(req.params.documentoId), req.acessoProjeto!.projetoId])
+  const before = await query<{ caminho_arquivo: string | null; url: string | null; tipo_origem: string; compra_id: number | null }>('SELECT caminho_arquivo,url,tipo_origem,compra_id FROM documentos_projeto WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL', [Number(req.params.documentoId), req.acessoProjeto!.projetoId])
   if (!before.rows[0]) throw new AppError(404, 'Documento não encontrado.', 'DOCUMENTO_NAO_ENCONTRADO')
   const currentDocument = before.rows[0]!
   const stored = req.file ? await saveUploadedFile(req.acessoProjeto!.projetoId, 'documentos', req.file) : null
@@ -162,10 +215,11 @@ assetsRouter.put('/documentos/:documentoId', requireProjectPermission('documento
     const replacingSource = Boolean(stored || url)
     const source = replacingSource ? (stored ? 'ARQUIVO' : 'LINK') : currentDocument.tipo_origem
     const document = await withTransaction(async (client) => {
-      const { rows } = await client.query(`UPDATE documentos_projeto SET titulo=$3,categoria=(SELECT nome FROM categorias_documento WHERE id=$4),descricao=$5,tipo_origem=$6,url=$7,caminho_arquivo=$8,nome_original=COALESCE($9,nome_original),tipo_mime=COALESCE($10,tipo_mime)
-        WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL RETURNING *`, [Number(req.params.documentoId),req.acessoProjeto!.projetoId,input.titulo,input.categoria_ids[0],input.descricao,source,replacingSource ? url : currentDocument.url,replacingSource ? stored?.relativePath || null : currentDocument.caminho_arquivo,stored?.originalName,stored?.mimeType])
+      const { rows } = await client.query(`UPDATE documentos_projeto SET titulo=$3,categoria=(SELECT nome FROM categorias_documento WHERE id=$4),tipo_documento_id=$5,descricao=$6,tipo_origem=$7,url=$8,caminho_arquivo=$9,nome_original=COALESCE($10,nome_original),tipo_mime=COALESCE($11,tipo_mime)
+        WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL AND EXISTS (SELECT 1 FROM tipos_documento WHERE id=$5 AND projeto_id=$2 AND excluido_em IS NULL) RETURNING *`, [Number(req.params.documentoId),req.acessoProjeto!.projetoId,input.titulo,input.categoria_ids[0],input.tipo_documento_id,input.descricao,source,replacingSource ? url : currentDocument.url,replacingSource ? stored?.relativePath || null : currentDocument.caminho_arquivo,stored?.originalName,stored?.mimeType])
       if (!rows[0]) throw new AppError(404, 'Documento não encontrado.', 'DOCUMENTO_NAO_ENCONTRADO')
       await replaceDocumentCategories(client, rows[0].id, req.acessoProjeto!.projetoId, input.categoria_ids)
+      if (currentDocument.compra_id) await assignDocumentCategoryByName(client, rows[0].id, req.acessoProjeto!.projetoId, 'Despesas')
       return rows[0]
     })
     if (replacingSource) await removeStoredFile(currentDocument.caminho_arquivo)

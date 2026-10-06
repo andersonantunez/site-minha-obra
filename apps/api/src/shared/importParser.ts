@@ -1,9 +1,23 @@
 import { AppError } from './errors.js'
 
-export type ImportFormat = 'TSV' | 'JSON'
+export type ImportFormat = 'TSV' | 'CSV' | 'JSON'
 
 function normalizeKey(value: string) {
   return value.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[\s/-]+/g, '_')
+}
+
+function parseCsvRow(line: string, delimiter: ',' | ';') {
+  const values: string[] = []
+  let value = '', quoted = false
+  for (let index = 0; index < line.length; index++) {
+    const character = line[index]!
+    if (character === '"') {
+      if (quoted && line[index + 1] === '"') { value += '"'; index++ } else quoted = !quoted
+    } else if (character === delimiter && !quoted) { values.push(value); value = '' } else value += character
+  }
+  if (quoted) throw new AppError(422, 'O CSV possui aspas não finalizadas.', 'CSV_INVALIDO')
+  values.push(value)
+  return values
 }
 
 export function parseImportContent(format: ImportFormat, content: string): unknown[] {
@@ -23,15 +37,18 @@ export function parseImportContent(format: ImportFormat, content: string): unkno
   }
 
   const lines = content.replace(/^\uFEFF/, '').split(/\r?\n/).filter((line) => line.trim())
-  if (lines.length < 2) throw new AppError(422, 'O TSV deve conter cabeçalho e ao menos uma linha.', 'TSV_VAZIO')
-  const headers = lines[0]!.split('\t').map(normalizeKey)
-  if (headers.some(header => !header)) throw new AppError(422, 'O TSV possui cabeçalho vazio.', 'TSV_CABECALHO_INVALIDO')
+  const formatName = format === 'CSV' ? 'CSV' : 'TSV'
+  if (lines.length < 2) throw new AppError(422, `O ${formatName} deve conter cabeçalho e ao menos uma linha.`, `${formatName}_VAZIO`)
+  const delimiter = format === 'CSV' ? (lines[0]!.includes(';') ? ';' : ',') : '\t'
+  const splitRow = (line: string) => format === 'CSV' ? parseCsvRow(line, delimiter as ',' | ';') : line.split(delimiter)
+  const headers = splitRow(lines[0]!).map(normalizeKey)
+  if (headers.some(header => !header)) throw new AppError(422, `O ${formatName} possui cabeçalho vazio.`, `${formatName}_CABECALHO_INVALIDO`)
   if (lines.length > 10001) throw new AppError(413, 'Utilize até 10000 registros por importação.', 'IMPORTACAO_MUITO_GRANDE')
-  if (new Set(headers).size !== headers.length) throw new AppError(422, 'O TSV possui colunas repetidas.', 'TSV_CABECALHO_INVALIDO')
+  if (new Set(headers).size !== headers.length) throw new AppError(422, `O ${formatName} possui colunas repetidas.`, `${formatName}_CABECALHO_INVALIDO`)
   return lines.slice(1).map((line, lineIndex) => {
-    const values = line.split('\t')
+    const values = splitRow(line)
     if (values.length !== headers.length) {
-      throw new AppError(422, `A linha ${lineIndex + 2} possui ${values.length} colunas; eram esperadas ${headers.length}.`, 'TSV_COLUNAS_INVALIDAS')
+      throw new AppError(422, `A linha ${lineIndex + 2} possui ${values.length} colunas; eram esperadas ${headers.length}.`, `${formatName}_COLUNAS_INVALIDAS`)
     }
     return Object.fromEntries(headers.map((header, index) => [header, values[index]?.trim() || null]))
   })

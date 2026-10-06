@@ -29,7 +29,7 @@ it('uses identical stage data for tree, options and ordered export without chang
  expect(full.worksheets[0]!.getCell('F1').value).toBe('Início Real')
 })
 it('exports only the five parent cash-flow columns including supplier',async()=>{
- const report={projectId:1,project:{nome:'Obra',cidade:null,estado:null},rows:[{origem_id:3,data:'2026-09-17',descricao:'Cimento',fornecedor:'São João',detalhes:'Não exportar',valor:'-120',provisionado:false,origem:'PAGAMENTO'}]}
+ const report={projectId:1,project:{nome:'Obra',cidade:null,estado:null},rows:[{origem_id:3,data:'2026-09-17',descricao:'Cimento',fornecedor:'São João',categoria:'MATERIAL_CONSTRUCAO',detalhes:'Não exportar',valor:'-120',provisionado:false,origem:'PAGAMENTO'}]}
  const book=new ExcelJS.Workbook();await book.xlsx.load(await createCashFlowWorkbook(report))
  expect(book.worksheets.map(s=>s.name)).toEqual(['Fluxo de Caixa'])
  expect(book.worksheets[0]!.columnCount).toBe(5)

@@ -7,6 +7,7 @@ import { requireProjectPermission } from '../../shared/projectAccess.js'
 import { readStoredFile } from '../../shared/storage.js'
 import { PAYMENT_STATUS, SETTLED_PAYMENT_STATUSES } from '../pagamentos/payment-status.js'
 import { paymentFinancialCte } from '../pagamentos/purchase-financial.query.js'
+import { projectExecutionPercentage } from '../etapas/stage-query.js'
 
 export const dashboardRouter = Router({ mergeParams: true })
 dashboardRouter.use(requireAuth)
@@ -43,9 +44,7 @@ dashboardRouter.get('/', requireProjectPermission('visao_geral.visualizar'), asy
       COALESCE((SELECT SUM(valor) FROM pagamentos_financeiros WHERE projeto_id=$1 AND status=$6),0)::numeric(15,2) AS pendente,
       (SELECT COUNT(*)::int FROM cronogramas WHERE projeto_id=$1 AND parent_id IS NOT NULL AND excluido_em IS NULL AND data_fim IS NOT NULL AND data_fim<=CURRENT_DATE) AS subetapas_concluidas,
       (SELECT COUNT(*)::int FROM cronogramas WHERE projeto_id=$1 AND parent_id IS NOT NULL AND excluido_em IS NULL AND data_inicio IS NOT NULL AND data_inicio<=CURRENT_DATE AND (data_fim IS NULL OR data_fim>CURRENT_DATE)) AS subetapas_em_andamento,
-      COALESCE((SELECT ROUND(100 * COALESCE(SUM(peso) FILTER (WHERE data_fim IS NOT NULL AND data_fim<=CURRENT_DATE),0) / NULLIF(SUM(peso),0),0)
-        FROM (SELECT data_inicio,data_fim,GREATEST(1,COALESCE(data_fim_previsto-data_inicio_previsto+1,1))::numeric AS peso FROM cronogramas
-          WHERE projeto_id=$1 AND parent_id IS NOT NULL AND excluido_em IS NULL) AS subetapas),0) AS percentual_andamento`, [projectId,SETTLED_PAYMENT_STATUSES,PAYMENT_STATUS.PAGO_AGUARDANDO_ENTREGA,PAYMENT_STATUS.CONCLUIDO,PAYMENT_STATUS.EM_NEGOCIACAO,PAYMENT_STATUS.PENDENTE]),
+      ${projectExecutionPercentage('$1')} AS percentual_andamento`, [projectId,SETTLED_PAYMENT_STATUSES,PAYMENT_STATUS.PAGO_AGUARDANDO_ENTREGA,PAYMENT_STATUS.CONCLUIDO,PAYMENT_STATUS.EM_NEGOCIACAO,PAYMENT_STATUS.PENDENTE]),
     query(`WITH ${paymentFinancialCte}, meses AS (
       SELECT competencia AS mes,SUM(valor) AS previsto FROM itens_orcamento WHERE projeto_id=$1 AND excluido_em IS NULL GROUP BY competencia
     ), pagos AS (

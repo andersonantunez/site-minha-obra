@@ -9,6 +9,7 @@ const AppShell = lazy(() => import('./layouts/AppShell').then((module) => ({ def
 const AdminPage = lazy(() => import('./pages/AdminPage').then((module) => ({ default: module.AdminPage })))
 const DocumentsPage = lazy(() => import('./pages/DocumentsPage').then((module) => ({ default: module.DocumentsPage })))
 const DocumentCategoriesPage = lazy(() => import('./pages/DocumentCategoriesPage').then((module) => ({ default: module.DocumentCategoriesPage })))
+const DocumentTypesPage = lazy(() => import('./pages/DocumentTypesPage').then((module) => ({ default: module.DocumentTypesPage })))
 const BudgetPage = lazy(() => import('./pages/BudgetPage').then((module) => ({ default: module.BudgetPage })))
 const InvitePage = lazy(() => import('./pages/InvitePage').then((module) => ({ default: module.InvitePage })))
 const MembersPage = lazy(() => import('./pages/MembersPage').then((module) => ({ default: module.MembersPage })))
@@ -43,6 +44,7 @@ export function App() {
         <Route path="renders" element={<Navigate to="../documentos" replace />} />
         <Route path="plantas" element={<Navigate to="../documentos" replace />} />
         <Route path="categorias-documentos" element={<ProjectPermissionRoute permission="categorias.visualizar"><DocumentCategoriesPage /></ProjectPermissionRoute>} />
+        <Route path="tipos-documento" element={<ProjectPermissionRoute permission="categorias.visualizar"><DocumentTypesPage /></ProjectPermissionRoute>} />
         <Route path="documentos" element={<ProjectPermissionRoute permission="documentos.visualizar"><DocumentsPage /></ProjectPermissionRoute>} />
         <Route path="participantes" element={<ProjectPermissionRoute permission="membros.visualizar"><MembersPage /></ProjectPermissionRoute>} />
         <Route path="permissoes" element={<ProjectPermissionRoute permission="permissoes.visualizar"><PermissionsPage /></ProjectPermissionRoute>} />

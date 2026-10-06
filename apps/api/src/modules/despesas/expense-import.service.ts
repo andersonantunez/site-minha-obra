@@ -18,6 +18,35 @@ const documentRow=z.object({tipo:z.literal('DOCUMENTO'),despesa_ref:reference,ti
 const rowSchema=z.discriminatedUnion('tipo',[expenseRow,itemRow,documentRow])
 export type ExpenseImportRow=z.infer<typeof rowSchema>
 const httpLinks=z.array(z.url().refine(v=>/^https?:\/\//i.test(v),'Utilize uma URL HTTP ou HTTPS.'))
+const expenseItemImportRow=z.object({...purchaseItemSchema.shape}).omit({ordem:true,links_cotacao:true}).strict()
+export type ExpenseItemImportRow=z.infer<typeof expenseItemImportRow>
+
+export function parseExpenseItemsImport(format:Extract<ImportFormat,'TSV'|'JSON'>,content:string){
+  const source=parseImportContent(format,content)
+  const rows:ExpenseItemImportRow[]=[]
+  const errors:{linha:number;erros:string[]}[]=[]
+  source.forEach((value,index)=>{
+    const raw={...(value as Record<string,unknown>)}
+    for(const [key,current] of Object.entries(raw))if(current===null)delete raw[key]
+    const result=expenseItemImportRow.safeParse(raw)
+    if(!result.success){errors.push({linha:index+2,erros:result.error.issues.map(issue=>`${issue.path.join('.')||'registro'}: ${issue.message}`)});return}
+    rows.push(result.data)
+  })
+  return {registros:rows,erros:errors,total:source.length}
+}
+
+export async function applyExpenseItemsImport(client:PoolClient,projectId:number,purchaseId:number,userId:number,rows:ExpenseItemImportRow[]){
+  const parent=await client.query('SELECT 1 FROM despesas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL FOR UPDATE',[purchaseId,projectId])
+  if(!parent.rowCount)throw new AppError(404,'Despesa não encontrada.','DESPESA_NAO_ENCONTRADA')
+  const current=await client.query<{ordem:number}>('SELECT COALESCE(MAX(ordem),0)::int AS ordem FROM pagamentos WHERE compra_id=$1 AND excluido_em IS NULL',[purchaseId])
+  for(const [index,row] of rows.entries()){
+    const manualTotal=row.valor_total!==null
+    const total=manualTotal?row.valor_total:row.valor_unitario===null?null:Number((Number(row.quantidade||1)*Number(row.valor_unitario)-Number(row.valor_desconto||0)).toFixed(2))
+    await client.query(`INSERT INTO pagamentos (projeto_id,compra_id,descricao,quantidade,unidade,observacao,valor_unitario,valor_desconto,valor,valor_total_manual,status,ordem,criado_por)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'PENDENTE',$11,$12)`,[projectId,purchaseId,row.descricao,row.quantidade,row.unidade,row.observacao,row.valor_unitario,row.valor_desconto,total,manualTotal,current.rows[0]!.ordem+index+1,userId])
+  }
+  return {itens:rows.length}
+}
 
 export function parseExpenseImport(format:ImportFormat,content:string){
   const source=parseImportContent(format,content)
@@ -83,7 +112,7 @@ export async function applyExpenseImport(client:PoolClient,projectId:number,user
     for(const url of new Set(row.links_cotacao||[]))await client.query('INSERT INTO links_cotacao_pagamento (pagamento_id,url,criado_por) VALUES ($1,$2,$3)',[result.rows[0]!.id,url,userId])
     items++
   }else if(row.tipo==='DOCUMENTO'){
-    const result=await client.query<{id:number}>(`INSERT INTO documentos_projeto (projeto_id,compra_id,titulo,categoria,tipo_origem,url,criado_por) VALUES ($1,$2,$3,'Despesas','LINK',$4,$5) RETURNING id`,[projectId,parents.get(row.despesa_ref),row.titulo,row.url,userId])
+    const result=await client.query<{id:number}>(`INSERT INTO documentos_projeto (projeto_id,compra_id,titulo,categoria,tipo_documento_id,tipo_origem,url,criado_por) SELECT $1,$2,$3,'Despesas',id,'LINK',$4,$5 FROM tipos_documento WHERE projeto_id=$1 AND lower(nome)=lower('Outros') AND excluido_em IS NULL RETURNING id`,[projectId,parents.get(row.despesa_ref),row.titulo,row.url,userId])
     for(const name of new Set(row.categorias)){
       await client.query('INSERT INTO categorias_documento (projeto_id,nome,criado_por) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',[projectId,name,userId])
       await assignDocumentCategoryByName(client,result.rows[0]!.id,projectId,name)
