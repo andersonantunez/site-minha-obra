@@ -17,7 +17,22 @@ describe('Contrato atual de transferências',()=>{
   expect(parsed.erros).toEqual([])
   expect(parsed.registros).toHaveLength(4)
   const item=parsed.registros.find(r=>r.tipo==='ITEM')
+  const document=parsed.registros.find(r=>r.tipo==='DOCUMENTO')
   expect(item).toMatchObject({valor_unitario:1.8333,valor_total:5500,quantidade:3000})
+  expect(document).toMatchObject({tipo_documento:'Nota Fiscal'})
+ })
+ it('valida o modo sem itens e mantém o total manual no leiaute de despesas',()=>{
+  const rows=JSON.parse(importExample('despesas','JSON'))
+  rows[0].incluir_itens=false
+  rows[0].valor_total_manual=1250
+  expect(parseExpenseImport('JSON',JSON.stringify(rows)).erros.some(error=>error.erros.some(message=>message.includes('configurada sem itens')))).toBe(true)
+  expect(parseExpenseImport('JSON',JSON.stringify(rows.slice(0,1))).registros[0]).toMatchObject({incluir_itens:false,valor_total_manual:1250})
+ })
+ it('rejeita etapas duplicadas e preserva a linha de referência no cronograma',()=>{
+  const rows=JSON.parse(importExample('cronograma','JSON'))
+  rows.push({...rows[0],ordem:9})
+  const parsed=parseSchedule('JSON',JSON.stringify(rows))
+  expect(parsed.erros).toContainEqual(expect.objectContaining({linha:5,erros:expect.arrayContaining([expect.stringContaining('Etapa duplicada')])}))
  })
  it('rejeita referência inexistente e campos antigos',()=>{
   const rows=JSON.parse(importExample('despesas','JSON'))

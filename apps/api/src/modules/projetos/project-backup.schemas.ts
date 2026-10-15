@@ -25,18 +25,19 @@ const task=z.object({old_id:id,descricao:z.string().min(2).max(240),observacao:t
 const cash=z.object({old_id:id,data:date,descricao:z.string().min(2).max(240),detalhes:text,valor:numeric}).strict()
 const expense=z.object({excluida:z.boolean().optional(),old_id:id,stage_old_id:id.nullable(),descricao:z.string().min(2).max(240),status:z.enum(PAYMENT_STATUS_VALUES),data_pagamento:nullableDate,forma_pagamento:text,
   categoria:z.enum(['MAO_DE_OBRA','MATERIAL_CONSTRUCAO','DOCUMENTACAO','FRETE','OUTROS']).nullable().optional(),
-  fornecedor:text,nome_contato_fornecedor:text,contato_fornecedor:text,observacao:text,valor_desconto:nonnegative,numero_nota_fiscal:text,
+  fornecedor:text,nome_contato_fornecedor:text,contato_fornecedor:text,observacao:text,incluir_itens:z.boolean().optional(),valor_total_manual:nonnegative.optional(),valor_desconto:nonnegative,numero_nota_fiscal:text,
   data_emissao:nullableDate,data_agendamento:nullableDate,data_entrega:nullableDate,ordem:z.number().int()}).strict()
 const item=z.object({old_id:id,despesa_old_id:id.nullable(),descricao:z.string().min(2).max(240),quantidade:nonnegative,unidade:text,observacao:text,
   valor_unitario:nonnegative,valor_desconto:nonnegative,valor_total:nonnegative,valor_total_manual:z.boolean(),ordem:z.number().int()}).strict()
 const category=z.object({old_id:id,nome:z.string().min(2).max(80)}).strict()
+const documentType=z.object({nome:z.string().trim().min(2).max(120)}).strict()
 const attachment=z.object({nome_original:z.string().max(255),tipo_mime:z.string().max(100),base64:z.string().min(1).max(84_000_000).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/,'Conteúdo Base64 inválido.')}).strict()
-const document=z.object({old_id:id,despesa_old_id:id.nullable(),titulo:z.string().min(1).max(180),descricao:text,tipo_origem:z.enum(['ARQUIVO','LINK']),
+const document=z.object({old_id:id,despesa_old_id:id.nullable(),titulo:z.string().min(1).max(180),tipo_documento:z.string().trim().min(2).max(120).optional(),descricao:text,tipo_origem:z.enum(['ARQUIVO','LINK']),
   url:z.url().nullable(),nome_original:text,tipo_mime:text,category_old_ids:z.array(id),arquivo:attachment.nullable(),criado_em:z.preprocess(v=>v instanceof Date?v.toISOString():v,z.iso.datetime())}).strict()
 export const projectBackupSchema=z.object({backup:z.object({
   version:z.literal(PROJECT_BACKUP_VERSION),exported_at:z.iso.datetime(),source_project_id:id,warnings:z.array(z.string()),project,
   modules:z.object({cronograma:z.array(stage),tarefas:z.array(task),fluxo_caixa:z.array(cash),despesas:z.array(expense),despesa_itens:z.array(item),
-    links_cotacao:z.array(z.object({item_old_id:id,url:z.url().refine(v=>/^https?:\/\//i.test(v),'Utilize uma URL HTTP ou HTTPS.')}).strict()),categorias:z.array(category),documentos:z.array(document),
+    links_cotacao:z.array(z.object({item_old_id:id,url:z.url().refine(v=>/^https?:\/\//i.test(v),'Utilize uma URL HTTP ou HTTPS.')}).strict()),categorias:z.array(category),tipos_documento:z.array(documentType).optional().default([]),documentos:z.array(document),
     participantes:z.array(z.object({email:z.email().max(254),papel:role}).strict()),
     permissoes_membros:z.array(z.object({email:z.email().max(254),chave:z.string().min(3).max(120),permitido:z.boolean()}).strict()),
     permissoes_papeis:z.array(z.object({papel:role,chave:z.string().min(3).max(120),permitido:z.boolean()}).strict()),

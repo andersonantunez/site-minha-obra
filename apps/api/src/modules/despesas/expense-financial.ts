@@ -6,7 +6,9 @@ export function expenseItemTotalSql(alias = 'i') {
 }
 
 export function expenseTotalSql(alias = 'd') {
-  return `(COALESCE((SELECT SUM(${expenseItemTotalSql('item_total')}) FROM pagamentos item_total
-    WHERE item_total.compra_id=${alias}.id AND item_total.projeto_id=${alias}.projeto_id
-      AND item_total.excluido_em IS NULL),0)-COALESCE(${alias}.valor_desconto,0))::numeric(15,2)`
+  return `GREATEST(0,((CASE WHEN NOT ${alias}.incluir_itens THEN ${alias}.valor_total_manual
+    ELSE COALESCE((SELECT SUM(${expenseItemTotalSql('item_total')}) FROM pagamentos item_total
+      WHERE item_total.compra_id=${alias}.id AND item_total.projeto_id=${alias}.projeto_id
+        AND item_total.excluido_em IS NULL),0)
+    END)-COALESCE(${alias}.valor_desconto,0)))::numeric(15,2)`
 }

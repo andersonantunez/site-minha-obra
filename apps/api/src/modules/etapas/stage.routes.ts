@@ -31,6 +31,7 @@ const scheduleSchema = z.object({
 
 const importSchema = z.object({ formato: z.enum(['TSV', 'JSON']), conteudo: z.string().min(2), modo: z.enum(['ACRESCENTAR', 'SUBSTITUIR']).optional(), nomeArquivo: z.string().max(255).optional() })
 type ImportRow = z.infer<typeof scheduleSchema> & { tipo: 'ETAPA' | 'SUBITEM'; etapa_pai: string | null }
+type ScheduleImportResult = { registros: ImportRow[]; erros: { linha: number; erros: string[] }[]; total: number; linhas: number[] }
 
 function normalizeDate(value: unknown) {
   if (typeof value !== 'string') return value
@@ -42,9 +43,12 @@ function normalizeDate(value: unknown) {
   return `${year}-${month}-${day}`
 }
 
-export function parseSchedule(format:'TSV'|'JSON',content:string){
+const stageReferenceKey=(value:string)=>value.trim().toLocaleLowerCase('pt-BR')
+
+export function parseSchedule(format:'TSV'|'JSON',content:string):ScheduleImportResult{
   const raw=parseImportContent(format,content)
   const valid:ImportRow[]=[]
+  const lines:number[]=[]
   const errors:{linha:number;erros:string[]}[]=[]
   const schema=z.object({...scheduleSchema.shape,tipo:z.enum(['ETAPA','SUBITEM']),etapa_pai:z.string().trim().optional().nullable()}).omit({parent_id:true}).strict()
   raw.forEach((value,index)=>{
@@ -58,11 +62,29 @@ export function parseSchedule(format:'TSV'|'JSON',content:string){
     if(row.data_inicio_previsto&&row.data_fim_previsto&&row.data_fim_previsto<row.data_inicio_previsto)issues.push('data_fim_previsto: anterior ao início previsto.')
     if(row.data_inicio&&row.data_fim&&row.data_fim<row.data_inicio)issues.push('data_fim: anterior ao início real.')
     if(issues.length)errors.push({linha:index+2,erros:issues})
-    else valid.push({...row,parent_id:null,etapa_pai:row.etapa_pai||null})
+    else {valid.push({...row,parent_id:null,etapa_pai:row.etapa_pai||null});lines.push(index+2)}
   })
-  const names=new Set<string>()
-  valid.filter(row=>row.tipo==='ETAPA').forEach(row=>{const key=row.nome.toLowerCase();if(names.has(key))errors.push({linha:2,erros:[`Etapa duplicada no arquivo: ${row.nome}.`]});names.add(key)})
-  return {registros:valid,erros:errors,total:raw.length}
+  const names=new Map<string,number>()
+  valid.forEach((row,index)=>{if(row.tipo!=='ETAPA')return;const key=stageReferenceKey(row.nome);const firstLine=names.get(key);if(firstLine){errors.push({linha:lines[index]!,erros:[`Etapa duplicada no arquivo: ${row.nome}. A primeira ocorrência está na linha ${firstLine}.`]})}else names.set(key,lines[index]!)})
+  return {registros:valid,erros:errors,total:raw.length,linhas:lines}
+}
+
+async function scheduleImportReferenceErrors(projectId:number, parsed:ScheduleImportResult, mode:'ACRESCENTAR'|'SUBSTITUIR') {
+  const errors:{linha:number;erros:string[]}[]=[]
+  const importedParents=new Set(parsed.registros.filter(row=>row.tipo==='ETAPA').map(row=>stageReferenceKey(row.nome)))
+  const existing=mode==='ACRESCENTAR'?await query<{nome:string}>(`SELECT nome FROM cronogramas WHERE projeto_id=$1 AND parent_id IS NULL AND excluido_em IS NULL`,[projectId]):{rows:[] as {nome:string}[]}
+  const existingNames=new Map<string,number>()
+  for(const parent of existing.rows){const key=stageReferenceKey(parent.nome);existingNames.set(key,(existingNames.get(key)||0)+1)}
+  parsed.registros.forEach((row,index)=>{
+    const line=parsed.linhas[index]!
+    if(row.tipo==='ETAPA'&&existingNames.has(stageReferenceKey(row.nome)))errors.push({linha:line,erros:[`Já existe uma etapa ativa com o nome "${row.nome}". Use outro nome ou importe no modo Substituir.`]})
+    if(row.tipo==='SUBITEM'&&!importedParents.has(stageReferenceKey(row.etapa_pai!))){
+      const matches=existingNames.get(stageReferenceKey(row.etapa_pai!))||0
+      if(matches===0)errors.push({linha:line,erros:[`Etapa pai não encontrada: ${row.etapa_pai}.`]})
+      else if(matches>1)errors.push({linha:line,erros:[`A etapa pai "${row.etapa_pai}" está duplicada no cronograma. Informe uma etapa pai sem ambiguidade.`]})
+    }
+  })
+  return errors
 }
 
 async function ensureParent(projectId: number, parentId: number | null | undefined) {
@@ -152,10 +174,11 @@ stagesRouter.delete('/:itemId', requireProjectPermission('etapas.excluir'), asyn
 
 stagesRouter.get('/importacao/modelo', requireProjectPermission('etapas.inserir'), (req,res)=>{const format=z.enum(['TSV','JSON']).parse(req.query.formato||'JSON');res.type(format==='JSON'?'application/json':'text/tab-separated-values').attachment(`cronograma.${format.toLowerCase()}`).send(importExample('cronograma',format))})
 
-stagesRouter.post('/importacao/preview', requireProjectPermission('etapas.inserir'), validateBody(importSchema), async (req, res) => res.json(parseSchedule(req.body.formato, req.body.conteudo)))
+stagesRouter.post('/importacao/preview', requireProjectPermission('etapas.inserir'), validateBody(importSchema), async (req, res) => {const parsed=parseSchedule(req.body.formato,req.body.conteudo);parsed.erros.push(...await scheduleImportReferenceErrors(req.acessoProjeto!.projetoId,parsed,req.body.modo||'ACRESCENTAR'));res.json(parsed)})
 
 stagesRouter.post('/importacao/confirmar', requireProjectPermission('etapas.inserir'), validateBody(importSchema.required({ modo: true })), async (req, res) => {
   const parsed = parseSchedule(req.body.formato, req.body.conteudo)
+  parsed.erros.push(...await scheduleImportReferenceErrors(req.acessoProjeto!.projetoId,parsed,req.body.modo))
   if (parsed.erros.length) throw new AppError(422, 'A importação possui erros e não foi aplicada.', 'IMPORTACAO_INVALIDA', parsed.erros)
   const importId = await withTransaction(async (client) => {
     const projectId = req.acessoProjeto!.projetoId

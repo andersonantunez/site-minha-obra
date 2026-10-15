@@ -43,6 +43,8 @@ export const purchaseSchema = z.object({
   nome_contato_fornecedor: optionalText(180),
   contato_fornecedor: supplierPhone,
   observacao: optionalText(4_000),
+  incluir_itens: z.preprocess((value) => value === false || value === 'false' ? false : true, z.boolean()).default(true),
+  valor_total_manual: z.preprocess(parseBrazilianNumber, z.coerce.number().positive('Informe um valor total maior que zero.').max(999_999_999_999.99).optional().nullable()).transform((value) => value ?? null),
   valor_desconto: z.preprocess(parseBrazilianNumber, z.coerce.number().min(0).max(999_999_999_999.99).optional().nullable()).transform((value) => value ?? null),
   numero_nota_fiscal: optionalText(100),
   data_emissao: optionalDate,
@@ -51,6 +53,7 @@ export const purchaseSchema = z.object({
   ordem: z.coerce.number().int().min(0).max(999_999).default(0),
 }).superRefine((value, context) => {
   if (SETTLED_PAYMENT_STATUSES.includes(value.status) && !value.data_pagamento) context.addIssue({ code: 'custom', path: ['data_pagamento'], message: 'A data do pagamento é obrigatória para os status Pago - Aguardando Entrega e Concluído.' })
+  if (!value.incluir_itens && !value.valor_total_manual) context.addIssue({ code: 'custom', path: ['valor_total_manual'], message: 'Informe um valor total maior que zero.' })
 })
 
 export const purchaseItemSchema = z.object({

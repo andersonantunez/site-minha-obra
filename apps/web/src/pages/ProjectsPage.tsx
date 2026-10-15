@@ -8,7 +8,6 @@ import { useAuth } from '../lib/auth'
 import { formatDateRange } from '../lib/format'
 import { roleLabel } from '../lib/projectAccess'
 import { TopbarUser } from '../components/TopbarUser'
-import { SystemAdminLink } from '../components/SystemAdminLink'
 
 type ProjectFilter = 'ATIVOS' | 'ARQUIVADOS' | 'TODOS'
 type Project = {
@@ -66,7 +65,6 @@ export function ProjectsPage() {
         ? <EmptyState icon={Building2} title={emptyTitle} description={filter === 'ATIVOS' ? 'Cadastre as informações essenciais do projeto. No plano Free, você pode ter uma obra própria e participar de quantas for convidado.' : 'Altere o filtro para visualizar outros projetos ou cadastre uma nova obra.'} action={filter === 'ATIVOS' ? <AddButton onClick={() => setCreating(true)}>Criar primeira obra</AddButton> : undefined} />
         : <>{filter !== 'ARQUIVADOS' && activeProjects.length > 0 && <ProjectCards projects={activeProjects} />}{filter === 'TODOS' && archivedProjects.length > 0 && <div className="archived-projects-divider"><span>Projetos arquivados</span></div>}{filter !== 'ATIVOS' && archivedProjects.length > 0 && <ProjectCards projects={archivedProjects} archived />}</>}
     </main>
-    {user?.administrador_sistema && <SystemAdminLink className="system-admin-corner-link" />}
     {creating && <div className="dialog-backdrop" role="presentation"><section className="dialog large" role="dialog" aria-modal="true" aria-labelledby="new-project-title"><header><div><small>NOVO PROJETO</small><h2 id="new-project-title">Cadastre sua obra</h2></div><button onClick={() => setCreating(false)}><X /></button></header><form onSubmit={submit}>
       {create.error && <ErrorNotice message={create.error.message} />}
       <label className="field span-2"><span>Nome do projeto</span><input name="nome" required minLength={3} placeholder="Ex.: CASA DALS" /></label>

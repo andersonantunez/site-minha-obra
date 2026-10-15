@@ -9,7 +9,7 @@ type DatabaseRow = Record<string, unknown>
 type DocumentRow = DatabaseRow & {
   old_id: number; despesa_old_id: number | null; titulo: string; criado_em: string; descricao: string | null
   tipo_origem: 'ARQUIVO' | 'LINK'; url: string | null; caminho_arquivo: string | null
-  nome_original: string | null; tipo_mime: string | null; category_old_ids: number[]
+  nome_original: string | null; tipo_mime: string | null; tipo_documento: string; category_old_ids: number[]
 }
 
 const projectColumns = `nome,descricao,endereco,cep,logradouro,numero,complemento,bairro,cidade,estado,codigo_ibge_cidade,
@@ -29,17 +29,18 @@ async function loadBackupRows(client: PoolClient, projectId: number) {
   const cashFlow = await client.query(`SELECT id AS old_id,competencia AS data,descricao,observacao AS detalhes,valor
     FROM itens_orcamento WHERE projeto_id=$1 AND excluido_em IS NULL ORDER BY competencia,ordem,id`, [projectId])
   const purchases = await client.query(`SELECT (excluido_em IS NOT NULL) AS excluida,id AS old_id,etapa_id AS stage_old_id,descricao,status,categoria,data_pagamento,
-    forma_pagamento,fornecedor,nome_contato_fornecedor,contato_fornecedor,observacao,valor_desconto,numero_nota_fiscal,data_emissao,
+    forma_pagamento,fornecedor,nome_contato_fornecedor,contato_fornecedor,observacao,incluir_itens,valor_total_manual,valor_desconto,numero_nota_fiscal,data_emissao,
     data_agendamento,data_entrega,ordem FROM despesas d WHERE projeto_id=$1 AND (excluido_em IS NULL OR EXISTS (SELECT 1 FROM documentos_projeto doc WHERE doc.compra_id=d.id AND doc.excluido_em IS NULL) OR EXISTS (SELECT 1 FROM pagamentos i WHERE i.compra_id=d.id AND i.excluido_em IS NULL)) ORDER BY ordem,id`, [projectId])
   const payments = await client.query(`SELECT id AS old_id,compra_id AS despesa_old_id,descricao,observacao,ordem,quantidade,unidade,valor AS valor_total,valor_unitario,valor_desconto,valor_total_manual FROM pagamentos WHERE projeto_id=$1 AND excluido_em IS NULL ORDER BY ordem,id`, [projectId])
   const quoteLinks = await client.query(`SELECT l.pagamento_id AS item_old_id,l.url FROM links_cotacao_pagamento l
     JOIN pagamentos p ON p.id=l.pagamento_id WHERE p.projeto_id=$1 AND p.excluido_em IS NULL ORDER BY l.id`, [projectId])
   const categories = await client.query(`SELECT id AS old_id,nome FROM categorias_documento
     WHERE projeto_id=$1 AND excluido_em IS NULL ORDER BY nome,id`, [projectId])
-  const documents = await client.query<DocumentRow>(`SELECT d.id AS old_id,d.compra_id AS despesa_old_id,d.titulo,d.criado_em,
+  const documentTypes = await client.query(`SELECT nome FROM tipos_documento WHERE projeto_id=$1 AND excluido_em IS NULL ORDER BY nome,id`, [projectId])
+  const documents = await client.query<DocumentRow>(`SELECT d.id AS old_id,d.compra_id AS despesa_old_id,d.titulo,d.criado_em,td.nome AS tipo_documento,
     d.descricao,d.tipo_origem,d.url,d.caminho_arquivo,d.nome_original,d.tipo_mime,
     COALESCE(ARRAY_AGG(dc.categoria_id ORDER BY dc.categoria_id) FILTER (WHERE dc.categoria_id IS NOT NULL),'{}') AS category_old_ids
-    FROM documentos_projeto d LEFT JOIN documentos_projeto_categorias dc ON dc.documento_id=d.id AND EXISTS (SELECT 1 FROM categorias_documento c WHERE c.id=dc.categoria_id AND c.excluido_em IS NULL)
+    FROM documentos_projeto d JOIN tipos_documento td ON td.id=d.tipo_documento_id LEFT JOIN documentos_projeto_categorias dc ON dc.documento_id=d.id AND EXISTS (SELECT 1 FROM categorias_documento c WHERE c.id=dc.categoria_id AND c.excluido_em IS NULL)
     WHERE d.projeto_id=$1 AND d.excluido_em IS NULL GROUP BY d.id ORDER BY d.criado_em,d.id`, [projectId])
   const participants = await client.query(`SELECT LOWER(u.email) AS email,pa.codigo AS papel FROM membros_projeto mp
     JOIN usuarios u ON u.id=mp.usuario_id JOIN papeis pa ON pa.id=mp.papel_id
@@ -51,7 +52,7 @@ async function loadBackupRows(client: PoolClient, projectId: number) {
     JOIN papeis pa ON pa.id=ppp.papel_id JOIN permissoes pe ON pe.id=ppp.permissao_id
     WHERE ppp.projeto_id=$1 ORDER BY pa.codigo,pe.chave`, [projectId])
   return { project: project.rows[0], schedule: schedule.rows, tasks: tasks.rows, cashFlow: cashFlow.rows, purchases: purchases.rows,
-    payments: payments.rows, quoteLinks: quoteLinks.rows, categories: categories.rows, documents: documents.rows,
+    payments: payments.rows, quoteLinks: quoteLinks.rows, categories: categories.rows, documentTypes: documentTypes.rows, documents: documents.rows,
     participants: participants.rows, memberPermissions: memberPermissions.rows, rolePermissions: rolePermissions.rows }
 }
 
@@ -79,7 +80,7 @@ export async function exportProjectBackup(projectId: number): Promise<ProjectBac
         }
       }
     }
-    documents.push({ old_id: document.old_id, despesa_old_id: document.despesa_old_id, titulo: document.titulo,
+    documents.push({ old_id: document.old_id, despesa_old_id: document.despesa_old_id, titulo: document.titulo, tipo_documento: document.tipo_documento,
       criado_em: document.criado_em, descricao: document.descricao, tipo_origem: document.tipo_origem, url: document.url,
       nome_original: document.nome_original, tipo_mime: document.tipo_mime, category_old_ids: document.category_old_ids, arquivo })
   }
@@ -92,7 +93,7 @@ export async function exportProjectBackup(projectId: number): Promise<ProjectBac
       fluxo_caixa: data.cashFlow as ProjectBackup['backup']['modules']['fluxo_caixa'],
       despesas: data.purchases as ProjectBackup['backup']['modules']['despesas'], despesa_itens: data.payments as ProjectBackup['backup']['modules']['despesa_itens'],
       links_cotacao: data.quoteLinks as ProjectBackup['backup']['modules']['links_cotacao'],
-      categorias: data.categories as ProjectBackup['backup']['modules']['categorias'], documentos: documents,
+      categorias: data.categories as ProjectBackup['backup']['modules']['categorias'], tipos_documento: data.documentTypes as ProjectBackup['backup']['modules']['tipos_documento'], documentos: documents,
       participantes: data.participants as ProjectBackup['backup']['modules']['participantes'],
       permissoes_membros: data.memberPermissions as ProjectBackup['backup']['modules']['permissoes_membros'],
       permissoes_papeis: data.rolePermissions as ProjectBackup['backup']['modules']['permissoes_papeis'],
@@ -145,8 +146,8 @@ export async function importProjectBackup(userId: number, backupFile: ProjectBac
           VALUES ($1,$2,$3) RETURNING id`, [newProject.id,category.nome,userId])
         categoryIds.set(category.old_id,result.rows[0]!.id)
       }
-      await client.query(`INSERT INTO tipos_documento (projeto_id,nome,criado_por) VALUES
-        ($1,'Contrato',$2),($1,'Orçamento',$2),($1,'Nota Fiscal',$2),($1,'Comprovante',$2),($1,'Documento Técnico',$2),($1,'Outros',$2)`, [newProject.id,userId])
+      const documentTypeNames = [...new Set(['Contrato','Orçamento','Nota Fiscal','Comprovante','Documento Técnico','Outros',...backup.modules.tipos_documento.map(type=>type.nome),...backup.modules.documentos.map(document=>document.tipo_documento||'Outros')])]
+      for (const name of documentTypeNames) await client.query('INSERT INTO tipos_documento (projeto_id,nome,criado_por) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [newProject.id,name,userId])
 
       const stageIds = new Map<number, number>()
       let pending = [...backup.modules.cronograma]
@@ -177,10 +178,10 @@ export async function importProjectBackup(userId: number, backupFile: ProjectBac
       for (const purchase of backup.modules.despesas) {
         const result = await client.query<{ id: number }>(`INSERT INTO despesas
           (projeto_id,etapa_id,descricao,status,categoria,data_pagamento,forma_pagamento,fornecedor,nome_contato_fornecedor,
-           contato_fornecedor,observacao,valor_desconto,numero_nota_fiscal,data_emissao,data_agendamento,data_entrega,ordem,criado_por)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`, [newProject.id,
+           contato_fornecedor,observacao,incluir_itens,valor_total_manual,valor_desconto,numero_nota_fiscal,data_emissao,data_agendamento,data_entrega,ordem,criado_por)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING id`, [newProject.id,
           mapped(stageIds,purchase.stage_old_id,'Despesa'),purchase.descricao,purchase.status,purchase.categoria,purchase.data_pagamento,
-           purchase.forma_pagamento,purchase.fornecedor,purchase.nome_contato_fornecedor,purchase.contato_fornecedor,purchase.observacao,purchase.valor_desconto,
+           purchase.forma_pagamento,purchase.fornecedor,purchase.nome_contato_fornecedor,purchase.contato_fornecedor,purchase.observacao,purchase.incluir_itens??true,purchase.incluir_itens===false?purchase.valor_total_manual:null,purchase.valor_desconto,
            purchase.numero_nota_fiscal,purchase.data_emissao,purchase.data_agendamento,purchase.data_entrega,purchase.ordem,userId])
         purchaseIds.set(purchase.old_id,result.rows[0]!.id)
         if(purchase.excluida)await client.query('UPDATE despesas SET excluido_em=NOW() WHERE id=$1',[result.rows[0]!.id])
@@ -212,10 +213,10 @@ export async function importProjectBackup(userId: number, backupFile: ProjectBac
         }
         const result = await client.query<{ id: number }>(`INSERT INTO documentos_projeto
           (projeto_id,compra_id,titulo,categoria,tipo_documento_id,descricao,tipo_origem,url,caminho_arquivo,nome_original,tipo_mime,criado_por,criado_em)
-          SELECT $1,$2,$3,$4,id,$5,$6,$7,$8,$9,$10,$11,$12 FROM tipos_documento WHERE projeto_id=$1 AND lower(nome)=lower('Outros') AND excluido_em IS NULL RETURNING id`, [newProject.id,
+          SELECT $1,$2,$3,$4,id,$5,$6,$7,$8,$9,$10,$11,$12 FROM tipos_documento WHERE projeto_id=$1 AND lower(nome)=lower($13) AND excluido_em IS NULL RETURNING id`, [newProject.id,
           mapped(purchaseIds,document.despesa_old_id,'Despesa do documento'),document.titulo,document.despesa_old_id?'Despesas':'OUTROS',document.descricao,
           document.tipo_origem,document.url,stored?.relativePath||null,stored?.originalName||document.nome_original,
-          stored?.mimeType||document.tipo_mime,userId,document.criado_em])
+          stored?.mimeType||document.tipo_mime,userId,document.criado_em,document.tipo_documento||'Outros'])
         for (const oldCategoryId of document.category_old_ids) await client.query(`INSERT INTO documentos_projeto_categorias
           (documento_id,categoria_id) VALUES ($1,$2)`, [result.rows[0]!.id,mapped(categoryIds,oldCategoryId,'categoria de documento')])
       }

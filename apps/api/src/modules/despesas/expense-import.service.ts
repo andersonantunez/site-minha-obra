@@ -14,7 +14,7 @@ const expenseRow=z.object({...purchaseSchema.shape,tipo:z.literal('DESPESA'),ref
   })
 const itemRow=z.object({...purchaseItemSchema.shape,tipo:z.literal('ITEM'),referencia:reference,despesa_ref:reference})
   .omit({ordem:true}).strict()
-const documentRow=z.object({tipo:z.literal('DOCUMENTO'),despesa_ref:reference,titulo:z.string().trim().min(2).max(180),url:z.url().refine(v=>/^https?:\/\//i.test(v),'Utilize uma URL HTTP ou HTTPS.'),categorias:z.array(z.string().trim().min(2).max(80)).min(1)})
+const documentRow=z.object({tipo:z.literal('DOCUMENTO'),despesa_ref:reference,titulo:z.string().trim().min(2).max(180),tipo_documento:z.string().trim().min(2).max(120).default('Outros'),url:z.url().refine(v=>/^https?:\/\//i.test(v),'Utilize uma URL HTTP ou HTTPS.'),categorias:z.array(z.string().trim().min(2).max(80)).min(1)})
 const rowSchema=z.discriminatedUnion('tipo',[expenseRow,itemRow,documentRow])
 export type ExpenseImportRow=z.infer<typeof rowSchema>
 const httpLinks=z.array(z.url().refine(v=>/^https?:\/\//i.test(v),'Utilize uma URL HTTP ou HTTPS.'))
@@ -36,8 +36,9 @@ export function parseExpenseItemsImport(format:Extract<ImportFormat,'TSV'|'JSON'
 }
 
 export async function applyExpenseItemsImport(client:PoolClient,projectId:number,purchaseId:number,userId:number,rows:ExpenseItemImportRow[]){
-  const parent=await client.query('SELECT 1 FROM despesas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL FOR UPDATE',[purchaseId,projectId])
+  const parent=await client.query<{incluir_itens:boolean}>('SELECT incluir_itens FROM despesas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL FOR UPDATE',[purchaseId,projectId])
   if(!parent.rowCount)throw new AppError(404,'Despesa não encontrada.','DESPESA_NAO_ENCONTRADA')
+  if(!parent.rows[0]!.incluir_itens)throw new AppError(409,'Não é possível incluir itens em uma despesa configurada sem itens.','ITENS_DESABILITADOS')
   const current=await client.query<{ordem:number}>('SELECT COALESCE(MAX(ordem),0)::int AS ordem FROM pagamentos WHERE compra_id=$1 AND excluido_em IS NULL',[purchaseId])
   for(const [index,row] of rows.entries()){
     const manualTotal=row.valor_total!==null
@@ -71,7 +72,7 @@ export function parseExpenseImport(format:ImportFormat,content:string){
     originalLines.push(line)
   })
   const references=new Set<string>()
-  const expenses=new Set(rows.filter(row=>row.tipo==='DESPESA').map(row=>row.referencia))
+  const expenses=new Map(rows.filter(row=>row.tipo==='DESPESA').map(row=>[row.referencia,row]))
   rows.forEach((row,index)=>{
     if(row.tipo!=='DOCUMENTO'){
       const key=`${row.tipo}:${row.referencia}`
@@ -79,8 +80,10 @@ export function parseExpenseImport(format:ImportFormat,content:string){
       references.add(key)
     }
     if(row.tipo!=='DESPESA'&&!expenses.has(row.despesa_ref))errors.push({linha:originalLines[index]!,erros:[`despesa_ref: ${row.despesa_ref} não consta no arquivo.`]})
+    const expense=expenses.get(row.tipo==='DESPESA'?row.referencia:row.despesa_ref)
+    if(row.tipo==='ITEM'&&expense?.tipo==='DESPESA'&&expense.incluir_itens===false)errors.push({linha:originalLines[index]!,erros:[`despesa_ref: ${row.despesa_ref} está configurada sem itens.`]})
   })
-  return {registros:rows,erros:errors,total:source.length}
+  return {registros:rows,erros:errors,total:source.length,linhas:originalLines}
 }
 
 export async function applyExpenseImport(client:PoolClient,projectId:number,userId:number,rows:ExpenseImportRow[],mode:'ACRESCENTAR'|'SUBSTITUIR'){
@@ -99,9 +102,9 @@ export async function applyExpenseImport(client:PoolClient,projectId:number,user
     await client.query('UPDATE despesas SET excluido_em=NOW() WHERE projeto_id=$1 AND excluido_em IS NULL',[projectId])
   }
   for(const row of rows)if(row.tipo==='DESPESA'){
-    const result=await client.query<{id:number}>(`INSERT INTO despesas (projeto_id,descricao,etapa_id,status,categoria,fornecedor,nome_contato_fornecedor,contato_fornecedor,observacao,valor_desconto,data_pagamento,forma_pagamento,numero_nota_fiscal,data_emissao,data_agendamento,data_entrega,criado_por)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id`,
-      [projectId,row.descricao,resolved.get(row.referencia),row.status,row.categoria,row.fornecedor,row.nome_contato_fornecedor,row.contato_fornecedor,row.observacao,row.valor_desconto,row.data_pagamento,row.forma_pagamento,row.numero_nota_fiscal,row.data_emissao,row.data_agendamento,row.data_entrega,userId])
+    const result=await client.query<{id:number}>(`INSERT INTO despesas (projeto_id,descricao,etapa_id,status,categoria,fornecedor,nome_contato_fornecedor,contato_fornecedor,observacao,incluir_itens,valor_total_manual,valor_desconto,data_pagamento,forma_pagamento,numero_nota_fiscal,data_emissao,data_agendamento,data_entrega,criado_por)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id`,
+      [projectId,row.descricao,resolved.get(row.referencia),row.status,row.categoria,row.fornecedor,row.nome_contato_fornecedor,row.contato_fornecedor,row.observacao,row.incluir_itens,row.incluir_itens?null:row.valor_total_manual,row.valor_desconto,row.data_pagamento,row.forma_pagamento,row.numero_nota_fiscal,row.data_emissao,row.data_agendamento,row.data_entrega,userId])
     parents.set(row.referencia,result.rows[0]!.id)
   }
   let items=0,documents=0
@@ -112,7 +115,8 @@ export async function applyExpenseImport(client:PoolClient,projectId:number,user
     for(const url of new Set(row.links_cotacao||[]))await client.query('INSERT INTO links_cotacao_pagamento (pagamento_id,url,criado_por) VALUES ($1,$2,$3)',[result.rows[0]!.id,url,userId])
     items++
   }else if(row.tipo==='DOCUMENTO'){
-    const result=await client.query<{id:number}>(`INSERT INTO documentos_projeto (projeto_id,compra_id,titulo,categoria,tipo_documento_id,tipo_origem,url,criado_por) SELECT $1,$2,$3,'Despesas',id,'LINK',$4,$5 FROM tipos_documento WHERE projeto_id=$1 AND lower(nome)=lower('Outros') AND excluido_em IS NULL RETURNING id`,[projectId,parents.get(row.despesa_ref),row.titulo,row.url,userId])
+    const result=await client.query<{id:number}>(`INSERT INTO documentos_projeto (projeto_id,compra_id,titulo,categoria,tipo_documento_id,tipo_origem,url,criado_por) SELECT $1,$2,$3,'Despesas',id,'LINK',$4,$5 FROM tipos_documento WHERE projeto_id=$1 AND lower(nome)=lower($6) AND excluido_em IS NULL RETURNING id`,[projectId,parents.get(row.despesa_ref),row.titulo,row.url,userId,row.tipo_documento])
+    if(!result.rows[0])throw new AppError(422,`Tipo de documento não encontrado: ${row.tipo_documento}. Cadastre-o antes de importar.`,'TIPO_DOCUMENTO_IMPORTACAO_INVALIDO')
     for(const name of new Set(row.categorias)){
       await client.query('INSERT INTO categorias_documento (projeto_id,nome,criado_por) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',[projectId,name,userId])
       await assignDocumentCategoryByName(client,result.rows[0]!.id,projectId,name)

@@ -10,7 +10,6 @@ import { useAuth } from '../lib/auth'
 import { hasProjectPermission, roleLabel, type ProjectAccessInfo } from '../lib/projectAccess'
 import { TopbarBackButton } from '../components/TopbarBackButton'
 import { TopbarUser } from '../components/TopbarUser'
-import { SystemAdminLink } from '../components/SystemAdminLink'
 
 const navigation: { group?: string; items: { label: string; icon: typeof LayoutDashboard; path: string; permission: string }[] }[] = [
   { items: [
@@ -74,7 +73,6 @@ export function AppShell() {
         })}
       </nav>
     </aside>
-    {user?.administrador_sistema && <SystemAdminLink className="system-admin-corner-link" />}
     {mobileOpen && <button className="sidebar-overlay" aria-label="Fechar menu" onClick={() => setMobileOpen(false)} />}
     <div className="app-main">
       <header className="app-topbar">

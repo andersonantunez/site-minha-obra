@@ -11,7 +11,7 @@ const EXPENSE_CATEGORY_LABELS:Record<ExpenseCategory,string>={MAO_DE_OBRA:'Mão 
 
 export type ExpenseReportItem = {id:number;despesa_id:number|null;descricao:string;quantidade:string|null;unidade:string|null;observacao:string|null;valor_unitario:string|null;valor_desconto:string|null;valor_total:string|null;valor_total_manual:boolean;ordem?:number;links_cotacao:{id:number;url:string}[]}
 export type ExpenseReportDocument = {id:number;despesa_id:number|null;titulo:string;tipo_origem:string;url:string|null;nome_original:string|null;categorias:string[];criado_em:string}
-export type ExpenseReportEntry = {id:number;descricao:string;etapa_id:number|null;etapa:string|null;etapa_ordem?:number|null;etapa_cor?:string|null;status:PaymentStatus;categoria?:ExpenseCategory|null;fornecedor:string|null;nome_contato_fornecedor:string|null;contato_fornecedor:string|null;forma_pagamento:string|null;data_pagamento:string|null;numero_nota_fiscal:string|null;data_emissao:string|null;data_agendamento:string|null;data_entrega:string|null;observacao:string|null;valor_desconto:string|null;valor_total:string;documento:string;ordem?:number;itens:ExpenseReportItem[];documentos:ExpenseReportDocument[]}
+export type ExpenseReportEntry = {id:number;descricao:string;etapa_id:number|null;etapa:string|null;etapa_ordem?:number|null;etapa_cor?:string|null;status:PaymentStatus;categoria?:ExpenseCategory|null;fornecedor:string|null;nome_contato_fornecedor:string|null;contato_fornecedor:string|null;forma_pagamento:string|null;data_pagamento:string|null;numero_nota_fiscal:string|null;data_emissao:string|null;data_agendamento:string|null;data_entrega:string|null;observacao:string|null;incluir_itens?:boolean;valor_total_manual?:string|null;valor_desconto:string|null;valor_total:string;documento:string;ordem?:number;itens:ExpenseReportItem[];documentos:ExpenseReportDocument[]}
 export type ExpenseReport = {projeto:{nome:string;endereco?:string|null;cep?:string|null;logradouro?:string|null;numero?:string|null;complemento?:string|null;bairro?:string|null;cidade:string|null;estado:string|null;latitude?:string|null;longitude?:string|null};despesas:ExpenseReportEntry[];itens_sem_despesa:ExpenseReportItem[]}
 export type ExpenseReportFilters = {status?:string;category?:string;search?:string;stageId?:number|null}
 
@@ -56,7 +56,7 @@ export async function getExpenseCrudData(projectId:number, filters:ExpenseReport
 export function expenseCrudProjection(report:ExpenseReport) {
   const item=(value:ExpenseReportItem)=>({...value,ordem:value.ordem??0,links_cotacao:value.links_cotacao.map(link=>({...link,loja:quoteStore(link.url)})),quantidade_documentos:0,documentos_legados_habilitados:false})
   return {
-    despesas:report.despesas.map(({documentos,...expense})=>({...expense,ordem:expense.ordem??0,etapa_ordem:expense.etapa_ordem??null,etapa_cor:expense.etapa_cor??null,itens:expense.itens.map(item),quantidade_documentos:documentos.length})),
+    despesas:report.despesas.map(({documentos,...expense})=>({...expense,incluir_itens:expense.incluir_itens??true,valor_total_manual:expense.valor_total_manual??null,ordem:expense.ordem??0,etapa_ordem:expense.etapa_ordem??null,etapa_cor:expense.etapa_cor??null,itens:expense.itens.map(item),quantidade_documentos:documentos.length})),
     itens_orfaos:report.itens_sem_despesa.map(item),
     total:report.despesas.length,
   }

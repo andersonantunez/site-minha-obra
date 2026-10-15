@@ -11,7 +11,8 @@ export function validBackup():ProjectBackup{return {backup:{
     despesa_itens:[{old_id:3,despesa_old_id:2,descricao:'Tijolos',quantidade:'3000',unidade:'Unidades',observacao:null,valor_unitario:'1.8333',valor_desconto:'0',valor_total:'5500',valor_total_manual:true,ordem:0}],
     links_cotacao:[{item_old_id:3,url:'https://example.com/cotacao'}],
     categorias:[{old_id:4,nome:'Despesas'},{old_id:5,nome:'Financiamento'}],
-    documentos:[{old_id:6,despesa_old_id:2,titulo:'Nota Fiscal',descricao:null,tipo_origem:'LINK',url:'https://example.com/nf',nome_original:null,tipo_mime:null,category_old_ids:[4,5],arquivo:null,criado_em:'2026-09-17T12:00:00.000Z'}],
+    tipos_documento:[{nome:'Nota Fiscal'}],
+    documentos:[{old_id:6,despesa_old_id:2,titulo:'Nota Fiscal',tipo_documento:'Nota Fiscal',descricao:null,tipo_origem:'LINK',url:'https://example.com/nf',nome_original:null,tipo_mime:null,category_old_ids:[4,5],arquivo:null,criado_em:'2026-09-17T12:00:00.000Z'}],
     participantes:[{email:'owner@example.com',papel:'PROPRIETARIO'}],permissoes_membros:[],permissoes_papeis:[],
   },
 }}}
@@ -20,6 +21,8 @@ describe('contrato atual de backup',()=>{
     const parsed=parseProjectBackup(validBackup())
     expect(parsed.backup.modules.despesa_itens[0]).toMatchObject({despesa_old_id:2,valor_unitario:'1.8333',valor_total:'5500',valor_total_manual:true})
     expect(parsed.backup.modules.documentos[0]?.category_old_ids).toEqual([4,5])
+    expect(parsed.backup.modules.documentos[0]).toMatchObject({tipo_documento:'Nota Fiscal'})
+    expect(parsed.backup.modules.tipos_documento).toEqual([{nome:'Nota Fiscal'}])
   })
   it('rejeita versão antiga',()=>{const backup=validBackup();Object.assign(backup.backup,{version:'1.0'});expect(()=>parseProjectBackup(backup)).toThrow(/Versão de backup incompatível/)})
   it('rejeita módulos antigos e documentos de itens',()=>{

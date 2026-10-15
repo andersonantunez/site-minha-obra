@@ -8,7 +8,7 @@ import { recordAudit } from '../../shared/audit.js'
 import { AppError } from '../../shared/errors.js'
 import { importExample } from '../../shared/import-examples.js'
 import { parseExpenseImport, applyExpenseImport, applyExpenseItemsImport, parseExpenseItemsImport } from '../despesas/expense-import.service.js'
-import { expenseItemTotalSql as itemTotalSql } from '../despesas/expense-financial.js'
+import { expenseItemTotalSql as itemTotalSql, expenseTotalSql } from '../despesas/expense-financial.js'
 import { requireProjectPermission } from '../../shared/projectAccess.js'
 import { readStoredFile, removeStoredFile, safeDownloadName, saveUploadedFile } from '../../shared/storage.js'
 import { identifyStore, validateHttpUrl } from '../../shared/url.js'
@@ -36,6 +36,22 @@ async function ensureStage(projectId: number, stageId?: number | null) {
   if (!stageId) return
   const { rowCount } = await query('SELECT 1 FROM cronogramas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL', [stageId, projectId])
   if (!rowCount) throw new AppError(422, 'A etapa não pertence ao projeto.', 'ETAPA_INVALIDA')
+}
+
+async function expenseImportReferenceErrors(projectId:number, parsed:ReturnType<typeof parseExpenseImport>) {
+  const [stages,documentTypes]=await Promise.all([
+    query<{nome:string}>(`SELECT nome FROM cronogramas WHERE projeto_id=$1 AND parent_id IS NULL AND excluido_em IS NULL`,[projectId]),
+    query<{nome:string}>(`SELECT nome FROM tipos_documento WHERE projeto_id=$1 AND excluido_em IS NULL`,[projectId]),
+  ])
+  const stageNames=new Map<string,number>()
+  for(const stage of stages.rows){const key=stage.nome.trim().toLocaleLowerCase('pt-BR');stageNames.set(key,(stageNames.get(key)||0)+1)}
+  const typeNames=new Set(documentTypes.rows.map(type=>type.nome.trim().toLocaleLowerCase('pt-BR')))
+  return parsed.registros.flatMap((row,index)=>{
+    const errors:string[]=[]
+    if(row.tipo==='DESPESA'&&row.etapa){const matches=stageNames.get(row.etapa.trim().toLocaleLowerCase('pt-BR'))||0;if(matches===0)errors.push(`Etapa não encontrada: ${row.etapa}.`);else if(matches>1)errors.push(`Etapa ambígua: ${row.etapa}. Há mais de uma etapa ativa com este nome.`)}
+    if(row.tipo==='DOCUMENTO'&&!typeNames.has(row.tipo_documento.trim().toLocaleLowerCase('pt-BR')))errors.push(`Tipo de documento não encontrado: ${row.tipo_documento}.`)
+    return errors.length?[{linha:parsed.linhas[index]||index+2,erros:errors}]:[]
+  })
 }
 
 async function syncPaymentLinks(client: { query: (sql: string, values?: unknown[]) => Promise<unknown> }, paymentId: number, links: string[], userId: number) {
@@ -131,12 +147,12 @@ paymentsRouter.get('/despesas-legado', requireProjectPermission('pagamentos.visu
   const itemTotal = itemTotalSql('i')
   const [purchases, orphanItems] = await Promise.all([
     query(`SELECT c.id,c.descricao,c.etapa_id,c.status,c.data_pagamento,c.forma_pagamento,c.fornecedor,
-      c.nome_contato_fornecedor,c.contato_fornecedor,c.observacao,c.valor_desconto,c.numero_nota_fiscal,c.data_emissao,c.data_agendamento,c.data_entrega,c.ordem,
+      c.nome_contato_fornecedor,c.contato_fornecedor,c.observacao,c.incluir_itens,c.valor_total_manual,c.valor_desconto,c.numero_nota_fiscal,c.data_emissao,c.data_agendamento,c.data_entrega,c.ordem,
       CASE WHEN NULLIF(TRIM(c.numero_nota_fiscal),'') IS NULL THEN 'Orçamento' ELSE 'Nota Fiscal' END AS documento,
       CASE WHEN COALESCE(pai.id,e.id) IS NULL THEN NULL ELSE 'ETAPA '||COALESCE(pai.ordem,e.ordem)||' - '||COALESCE(pai.nome,e.nome) END AS etapa,
       COALESCE(pai.ordem,e.ordem) AS etapa_ordem,
       COALESCE(pai.cor,e.cor) AS etapa_cor,
-      (COALESCE((SELECT SUM(${itemTotal}) FROM pagamentos i WHERE i.compra_id=c.id AND i.excluido_em IS NULL),0)-COALESCE(c.valor_desconto,0))::numeric(15,2) AS valor_total,
+      ${expenseTotalSql('c')} AS valor_total,
       COALESCE((SELECT JSONB_AGG(item ORDER BY item.ordem,item.id) FROM (
         SELECT i.id,i.descricao,i.quantidade,i.unidade,i.observacao,i.valor_unitario,i.valor_desconto,i.valor_total_manual,${itemTotal}::numeric(15,2) AS valor_total,i.ordem,i.documentos_legados_habilitados,
           COALESCE((SELECT JSONB_AGG(JSONB_BUILD_OBJECT('id',lc.id,'url',lc.url,'loja',CASE
@@ -176,10 +192,10 @@ paymentsRouter.post('/despesas', requireProjectPermission('pagamentos.inserir'),
   const purchase = await withTransaction(async (client) => {
     const { rows } = await client.query<{ id: number }>(`INSERT INTO despesas
       (projeto_id,descricao,etapa_id,status,categoria,data_pagamento,forma_pagamento,fornecedor,nome_contato_fornecedor,
-       contato_fornecedor,observacao,valor_desconto,numero_nota_fiscal,data_emissao,data_agendamento,data_entrega,ordem,criado_por)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`, [projectId,req.body.descricao,
+       contato_fornecedor,observacao,incluir_itens,valor_total_manual,valor_desconto,numero_nota_fiscal,data_emissao,data_agendamento,data_entrega,ordem,criado_por)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING id`, [projectId,req.body.descricao,
       req.body.etapa_id,req.body.status,req.body.categoria,req.body.data_pagamento,req.body.forma_pagamento,req.body.fornecedor,
-      req.body.nome_contato_fornecedor,req.body.contato_fornecedor,req.body.observacao,req.body.valor_desconto,req.body.numero_nota_fiscal,req.body.data_emissao,
+      req.body.nome_contato_fornecedor,req.body.contato_fornecedor,req.body.observacao,req.body.incluir_itens,req.body.incluir_itens?null:req.body.valor_total_manual,req.body.valor_desconto,req.body.numero_nota_fiscal,req.body.data_emissao,
       req.body.data_agendamento,req.body.data_entrega,req.body.ordem,req.usuarioId])
     await recordAudit(client,{projetoId:projectId,usuarioId:req.usuarioId!,acao:'COMPRA_CRIADA',entidade:'compras',registroId:rows[0]!.id,dadosNovos:req.body,enderecoIp:req.ip})
     return rows[0]
@@ -193,11 +209,12 @@ paymentsRouter.put('/despesas/:compraId', requireProjectPermission('pagamentos.a
   await withTransaction(async (client) => {
     const before=await client.query('SELECT * FROM despesas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL FOR UPDATE',[purchaseId,projectId])
     if(!before.rows[0])throw new AppError(404,'Compra não encontrada.','COMPRA_NAO_ENCONTRADA')
+    if(!req.body.incluir_itens){const items=await client.query('SELECT 1 FROM pagamentos WHERE compra_id=$1 AND excluido_em IS NULL LIMIT 1',[purchaseId]);if(items.rowCount)throw new AppError(422,'Para desabilitar a inclusão de itens, remova primeiro todos os itens da despesa.','DESPESA_COM_ITENS')}
     await client.query(`UPDATE despesas SET descricao=$3,etapa_id=$4,status=$5,categoria=$6,data_pagamento=$7,forma_pagamento=$8,fornecedor=$9,
-      nome_contato_fornecedor=$10,contato_fornecedor=$11,observacao=$12,valor_desconto=$13,numero_nota_fiscal=$14,data_emissao=$15,data_agendamento=$16,
-      data_entrega=$17,ordem=$18 WHERE id=$1 AND projeto_id=$2`,[purchaseId,projectId,req.body.descricao,req.body.etapa_id,
+      nome_contato_fornecedor=$10,contato_fornecedor=$11,observacao=$12,incluir_itens=$13,valor_total_manual=$14,valor_desconto=$15,numero_nota_fiscal=$16,data_emissao=$17,data_agendamento=$18,
+      data_entrega=$19,ordem=$20 WHERE id=$1 AND projeto_id=$2`,[purchaseId,projectId,req.body.descricao,req.body.etapa_id,
       req.body.status,req.body.categoria,req.body.data_pagamento,req.body.forma_pagamento,req.body.fornecedor,req.body.nome_contato_fornecedor,
-      req.body.contato_fornecedor,req.body.observacao,req.body.valor_desconto,req.body.numero_nota_fiscal,req.body.data_emissao,req.body.data_agendamento,req.body.data_entrega,req.body.ordem])
+      req.body.contato_fornecedor,req.body.observacao,req.body.incluir_itens,req.body.incluir_itens?null:req.body.valor_total_manual,req.body.valor_desconto,req.body.numero_nota_fiscal,req.body.data_emissao,req.body.data_agendamento,req.body.data_entrega,req.body.ordem])
     await recordAudit(client,{projetoId:projectId,usuarioId:req.usuarioId!,acao:'COMPRA_ATUALIZADA',entidade:'compras',registroId:purchaseId,dadosAnteriores:before.rows[0],dadosNovos:req.body,enderecoIp:req.ip})
   })
   res.status(204).end()
@@ -220,7 +237,7 @@ paymentsRouter.delete('/despesas/:compraId', requireProjectPermission('pagamento
 
 paymentsRouter.post('/despesas/:compraId/itens', requireProjectPermission('pagamentos.inserir'), validateBody(purchaseItemSchema), async(req,res)=>{
   const projectId=req.acessoProjeto!.projetoId;const purchaseId=Number(req.params.compraId)
-  const item=await withTransaction(async(client)=>{const parent=await client.query('SELECT 1 FROM despesas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL FOR UPDATE',[purchaseId,projectId]);if(!parent.rowCount)throw new AppError(404,'Despesa não encontrada.','DESPESA_NAO_ENCONTRADA');const manualTotal=req.body.valor_total!==null;const total=manualTotal?req.body.valor_total:req.body.valor_unitario===null?null:Number((Number(req.body.quantidade||1)*Number(req.body.valor_unitario)-Number(req.body.valor_desconto||0)).toFixed(2));const {rows}=await client.query<{id:number}>(`INSERT INTO pagamentos
+  const item=await withTransaction(async(client)=>{const parent=await client.query<{incluir_itens:boolean}>('SELECT incluir_itens FROM despesas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL FOR UPDATE',[purchaseId,projectId]);if(!parent.rowCount)throw new AppError(404,'Despesa não encontrada.','DESPESA_NAO_ENCONTRADA');if(!parent.rows[0]!.incluir_itens)throw new AppError(409,'Não é possível incluir itens em uma despesa configurada sem itens.','ITENS_DESABILITADOS');const manualTotal=req.body.valor_total!==null;const total=manualTotal?req.body.valor_total:req.body.valor_unitario===null?null:Number((Number(req.body.quantidade||1)*Number(req.body.valor_unitario)-Number(req.body.valor_desconto||0)).toFixed(2));const {rows}=await client.query<{id:number}>(`INSERT INTO pagamentos
     (projeto_id,compra_id,descricao,quantidade,unidade,observacao,valor_unitario,valor_desconto,valor,valor_total_manual,status,ordem,criado_por)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'PENDENTE',$11,$12) RETURNING id`,[projectId,purchaseId,req.body.descricao,req.body.quantidade,req.body.unidade,req.body.observacao,req.body.valor_unitario,req.body.valor_desconto,total,manualTotal,req.body.ordem,req.usuarioId]);await syncPaymentLinks(client,rows[0]!.id,req.body.links_cotacao||[],req.usuarioId!);await recordAudit(client,{projetoId:projectId,usuarioId:req.usuarioId!,acao:'ITEM_COMPRA_CRIADO',entidade:'pagamentos',registroId:rows[0]!.id,dadosNovos:req.body,enderecoIp:req.ip});return rows[0]})
   res.status(201).json({item})
@@ -253,8 +270,9 @@ paymentsRouter.delete('/itens/:itemId', requireProjectPermission('pagamentos.exc
 paymentsRouter.post('/itens/:itemId/mover', requireProjectPermission('pagamentos.atualizar'), validateBody(moveItemSchema), async(req,res)=>{
   const projectId=req.acessoProjeto!.projetoId;const itemId=Number(req.params.itemId)
   await withTransaction(async(client)=>{
-    const parent=await client.query('SELECT 1 FROM despesas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL FOR UPDATE',[req.body.despesa_id,projectId])
+    const parent=await client.query<{incluir_itens:boolean}>('SELECT incluir_itens FROM despesas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL FOR UPDATE',[req.body.despesa_id,projectId])
     if(!parent.rowCount)throw new AppError(404,'Compra de destino não encontrada.','COMPRA_NAO_ENCONTRADA')
+    if(!parent.rows[0]!.incluir_itens)throw new AppError(409,'Não é possível incluir itens em uma despesa configurada sem itens.','ITENS_DESABILITADOS')
     const item=await client.query('SELECT compra_id FROM pagamentos WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL FOR UPDATE',[itemId,projectId])
     if(!item.rowCount)throw new AppError(404,'Item não encontrado.','ITEM_NAO_ENCONTRADO')
     await client.query('UPDATE pagamentos SET compra_id=$3 WHERE id=$1 AND projeto_id=$2',[itemId,projectId,req.body.despesa_id])
@@ -265,7 +283,7 @@ paymentsRouter.post('/itens/:itemId/mover', requireProjectPermission('pagamentos
 
 paymentsRouter.post('/itens/mover', requireProjectPermission('pagamentos.atualizar'), validateBody(moveItemsSchema), async(req,res)=>{
   const projectId=req.acessoProjeto!.projetoId
-  const moved=await withTransaction(async(client)=>{const parent=await client.query('SELECT 1 FROM despesas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL FOR UPDATE',[req.body.despesa_id,projectId]);if(!parent.rowCount)throw new AppError(404,'Despesa de destino não encontrada.','DESPESA_NAO_ENCONTRADA');const result=await client.query(`UPDATE pagamentos SET compra_id=$1 WHERE projeto_id=$2 AND id=ANY($3::bigint[]) AND compra_id IS NULL AND excluido_em IS NULL`,[req.body.despesa_id,projectId,req.body.item_ids]);if(result.rowCount!==req.body.item_ids.length)throw new AppError(409,'Um ou mais itens já foram movidos ou não estão disponíveis.','ITENS_INDISPONIVEIS');return result.rowCount})
+  const moved=await withTransaction(async(client)=>{const parent=await client.query<{incluir_itens:boolean}>('SELECT incluir_itens FROM despesas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL FOR UPDATE',[req.body.despesa_id,projectId]);if(!parent.rowCount)throw new AppError(404,'Despesa de destino não encontrada.','DESPESA_NAO_ENCONTRADA');if(!parent.rows[0]!.incluir_itens)throw new AppError(409,'Não é possível incluir itens em uma despesa configurada sem itens.','ITENS_DESABILITADOS');const result=await client.query(`UPDATE pagamentos SET compra_id=$1 WHERE projeto_id=$2 AND id=ANY($3::bigint[]) AND compra_id IS NULL AND excluido_em IS NULL`,[req.body.despesa_id,projectId,req.body.item_ids]);if(result.rowCount!==req.body.item_ids.length)throw new AppError(409,'Um ou mais itens já foram movidos ou não estão disponíveis.','ITENS_INDISPONIVEIS');return result.rowCount})
   res.json({quantidade:moved})
 })
 
@@ -350,11 +368,14 @@ paymentsRouter.get('/importacao/modelo', requireProjectPermission('pagamentos.in
 })
 
 paymentsRouter.post('/importacao/preview', requireProjectPermission('pagamentos.inserir'), validateBody(paymentImportSchema), async(req,res)=>{
-  res.json(parseExpenseImport(req.body.formato,req.body.conteudo))
+  const parsed=parseExpenseImport(req.body.formato,req.body.conteudo)
+  parsed.erros.push(...await expenseImportReferenceErrors(req.acessoProjeto!.projetoId,parsed))
+  res.json(parsed)
 })
 
 paymentsRouter.post('/importacao/confirmar', requireProjectPermission('pagamentos.inserir'), validateBody(paymentImportSchema.required({modo:true})), async(req,res)=>{
   const parsed=parseExpenseImport(req.body.formato,req.body.conteudo)
+  parsed.erros.push(...await expenseImportReferenceErrors(req.acessoProjeto!.projetoId,parsed))
   if(parsed.erros.length)throw new AppError(422,'Corrija os campos indicados antes de importar.','IMPORTACAO_INVALIDA',parsed.erros)
   if(parsed.registros.some(row=>row.tipo==='DOCUMENTO')&&!req.acessoProjeto!.proprietario&&!req.acessoProjeto!.administradorSistema&&!req.acessoProjeto!.permissoes.has('documentos.inserir'))throw new AppError(403,'Você não possui permissão para importar documentos.','ACESSO_NEGADO')
   if(req.body.modo==='SUBSTITUIR'&&!req.acessoProjeto!.proprietario&&!req.acessoProjeto!.administradorSistema&&(!req.acessoProjeto!.permissoes.has('pagamentos.excluir')||!req.acessoProjeto!.permissoes.has('documentos.excluir')))throw new AppError(403,'A substituição exige permissão para excluir despesas e documentos.','ACESSO_NEGADO')
