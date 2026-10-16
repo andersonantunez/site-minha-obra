@@ -6,12 +6,12 @@ import { getCashFlowData, type CashFlowFilters } from '../orcamento/cash-flow.se
 import { getSchedule, type ScheduleRow } from '../etapas/schedule.service.js'
 import { reportMoney as formatMoney, reportDate as formatDate, spreadsheetDate as excelDate, styleReportSheet } from '../../shared/report.js'
 
-type Project = { nome: string; endereco?:string|null; cep?:string|null; logradouro?:string|null; numero?:string|null; complemento?:string|null; bairro?:string|null; cidade: string | null; estado: string | null; latitude?:string|null; longitude?:string|null }
+type Project = { nome: string; endereco?:string|null; cep?:string|null; logradouro?:string|null; numero?:string|null; complemento?:string|null; bairro?:string|null; cidade: string | null; estado: string | null; latitude?:string|null; longitude?:string|null; orcamento_mao_obra?:string|null; orcamento_materiais?:string|null }
 type CashFlowReportRow = { origem_id:number; fornecedor:string|null; categoria:string|null; data:string; descricao:string; detalhes:string|null; valor:string; provisionado:boolean; origem:string }
 const cashFlowCategoryLabels:Record<string,string>={MAO_DE_OBRA:'Mão de obra',MATERIAL_CONSTRUCAO:'Material de construção',DOCUMENTACAO:'Documentação',FRETE:'Frete',OUTROS:'Outros'}
 
 async function getProject(projectId: number) {
-  const result = await query<Project>('SELECT nome,endereco,cep,logradouro,numero,complemento,bairro,cidade,estado,latitude,longitude FROM projetos WHERE id=$1 AND excluido_em IS NULL',[projectId])
+  const result = await query<Project>('SELECT nome,endereco,cep,logradouro,numero,complemento,bairro,cidade,estado,latitude,longitude,orcamento_mao_obra,orcamento_materiais FROM projetos WHERE id=$1 AND excluido_em IS NULL',[projectId])
   if (!result.rows[0]) throw new AppError(404,'Projeto não encontrado.','PROJETO_NAO_ENCONTRADO')
   return result.rows[0]
 }
@@ -46,10 +46,11 @@ export function createCashFlowPdf(report: Awaited<ReturnType<typeof getCashFlowR
  const entries=report.rows.reduce((total,row)=>total+Math.max(0,Number(row.valor)),0)
  const exits=report.rows.reduce((total,row)=>total+Math.abs(Math.min(0,Number(row.valor))),0)
  pdfReportIndicators(pdf,[
-  {label:'Entrada',value:formatMoney(entries),color:'#176e9b'},
-  {label:'Saída',value:formatMoney(exits),color:'#b54444'},
+  {label:'Entrada',value:formatMoney(entries),color:'#176e9b',valueColor:'#176e9b'},
+  {label:'Saída',value:formatMoney(exits),color:'#b54444',valueColor:'#b54444'},
   {label:'Saldo',value:formatMoney(entries-exits),color:'#303732'},
  ])
+ pdfCashFlowBudgetCards(pdf,report,entries,exits)
  pdfTable(pdf,report.rows,[
  {label:'Data',width:75,value:r=>formatDate(r.data),align:'center',verticalAlign:'middle'},
  {label:'Descrição',width:250,value:r=>r.descricao},
@@ -59,6 +60,46 @@ export function createCashFlowPdf(report: Awaited<ReturnType<typeof getCashFlowR
  {label:'Provisionado',width:95,value:r=>r.provisionado?'Sim':'Não',align:'center'}])
  pdfReportTotal(pdf,'Total do Fluxo de Caixa',formatMoney(report.rows.reduce((total,row)=>total+Number(row.valor),0)))
  return finishReportPdf(pdf)
+}
+
+function pdfCashFlowBudgetCards(pdf: PDFKit.PDFDocument, report: Awaited<ReturnType<typeof getCashFlowReport>>, entries: number, exits: number) {
+ const laborSpent=report.rows.reduce((total,row)=>total+(row.categoria==='Mão de obra'?Math.abs(Math.min(0,Number(row.valor))):0),0)
+ const materialsSpent=report.rows.reduce((total,row)=>total+(row.categoria&&row.categoria!=='Mão de obra'?Math.abs(Math.min(0,Number(row.valor))):0),0)
+ const laborBudget=Number(report.project.orcamento_mao_obra||0)
+ const materialsBudget=Number(report.project.orcamento_materiais||0)
+ const consumption=entries>0?(exits/entries)*100:0
+ const consumptionColor=consumption>=70?'#b54444':consumption>=50?'#8a691a':'#55715d'
+ const cards: {title:string;description:string;budget:number;spent:number;color:string;background:string;consumption?:boolean}[]=[
+  {title:'Mão de obra',description:'Despesas classificadas como mão de obra',budget:laborBudget,spent:laborSpent,color:'#8d765a',background:'#f1e9df'},
+  {title:'Materiais',description:'Inclui materiais, frete, documentação e outros',budget:materialsBudget,spent:materialsSpent,color:'#66839a',background:'#e8eff3'},
+  {title:'Consumo do orçamento',description:'Saída em relação à entrada',budget:entries,spent:exits,color:consumptionColor,background:consumption>=70?'#f8e5e2':consumption>=50?'#f8f0d9':'#e7f0e7',consumption:true},
+ ]
+ const left=36,width=770,gap=10,height=116
+ if(pdf.y+height>530)pdf.addPage()
+ const y=pdf.y,cardWidth=(width-gap*2)/3
+ cards.forEach((card,index)=>{
+  const x=left+index*(cardWidth+gap)
+  const percentage=card.consumption?consumption:card.budget>0?(card.spent/card.budget)*100:0
+  const track=Math.min(100,Math.max(0,percentage))
+  pdf.roundedRect(x,y,cardWidth,height,4).fill(card.background)
+  pdf.font('Helvetica-Bold').fontSize(9).fillColor('#303732').text(card.title,x+12,y+12,{width:cardWidth-72,lineBreak:false})
+  pdf.font('Helvetica-Bold').fontSize(13).fillColor(card.color).text(card.budget>0?`${percentage.toFixed(1).replace('.',',')}%`:'—',x+cardWidth-58,y+10,{width:46,align:'right',lineBreak:false})
+  pdf.font('Helvetica').fontSize(7.2).fillColor('#69716c').text(card.description,x+12,y+29,{width:cardWidth-24,lineBreak:false})
+  pdf.rect(x+12,y+53,cardWidth-24,7).fill('#d9d8d1')
+  if(track>0)pdf.rect(x+12,y+53,(cardWidth-24)*track/100,7).fill(card.color)
+  if(card.consumption){
+   pdf.font('Helvetica-Bold').fontSize(6.5).fillColor('#7b817c').text('COMPROMETIDO',x+12,y+76,{width:cardWidth-24,lineBreak:false})
+   pdf.font('Helvetica-Bold').fontSize(8.5).fillColor(card.color).text(formatMoney(card.spent),x+12,y+87,{width:cardWidth-24,lineBreak:false})
+  }else{
+   const difference=card.budget - card.spent
+   pdf.font('Helvetica-Bold').fontSize(6.3).fillColor('#7b817c').text('ORÇADO',x+12,y+74,{width:cardWidth*.42,lineBreak:false})
+   pdf.text('REALIZADO',x+cardWidth*.55,y+74,{width:cardWidth*.35,lineBreak:false})
+   pdf.font('Helvetica-Bold').fontSize(8.5).fillColor('#303732').text(formatMoney(card.budget),x+12,y+84,{width:cardWidth*.42,lineBreak:false})
+   pdf.fillColor(card.color).text(formatMoney(card.spent),x+cardWidth*.55,y+84,{width:cardWidth*.35,lineBreak:false})
+   pdf.font('Helvetica').fontSize(6.3).fillColor('#7b817c').text(`Disponível: ${formatMoney(difference)}`,x+12,y+101,{width:cardWidth-24,lineBreak:false})
+  }
+ })
+ pdf.y=y+height+18
 }
 function scheduleReportColors(rows:ScheduleRow[]){
  const parentColors=new Map(rows.filter(row=>row.parent_id===null).map(row=>[row.id,row.cor]))

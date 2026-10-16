@@ -1,7 +1,7 @@
 ﻿import PDFDocument from 'pdfkit'
 export type ReportProject={nome:string;endereco?:string|null;cep?:string|null;logradouro?:string|null;numero?:string|null;complemento?:string|null;bairro?:string|null;cidade:string|null;estado:string|null;latitude?:string|number|null;longitude?:string|number|null}
 export type ReportColumn<T>={label:string;width:number;value:(row:T)=>string;align?:'left'|'center'|'right';secondary?:(row:T)=>string;badgeColor?:(row:T)=>string|undefined;badgeTextColor?:(row:T)=>string|undefined;verticalAlign?:'top'|'middle';cellBackground?:(row:T)=>string|undefined;cellTextColor?:(row:T)=>string|undefined;textColor?:(row:T)=>string|undefined;headerTextColor?:string}
-export type ReportIndicator={label:string;value:string;color:string}
+export type ReportIndicator={label:string;value:string;color:string;valueColor?:string}
 export function reportContrastColor(color:string){
  const value=color.replace('#','')
  if(!/^[0-9a-f]{6}$/i.test(value))return '#ffffff'
@@ -58,7 +58,7 @@ export function pdfReportIndicators(pdf:PDFKit.PDFDocument,indicators:ReportIndi
   const x=left+index*(cardWidth+gap),background=reportTintColor(indicator.color,.86)
   pdf.roundedRect(x,y,cardWidth,height,4).fill(background)
   pdf.font('Helvetica-Bold').fontSize(7.5).fillColor(indicator.color).text(indicator.label,x+12,y+13,{width:cardWidth-24,align:'left',lineBreak:false})
-  pdf.font('Helvetica-Bold').fontSize(12).fillColor('#303732').text(indicator.value,x+12,y+33,{width:cardWidth-24,align:'left',lineBreak:false})
+  pdf.font('Helvetica-Bold').fontSize(12).fillColor(indicator.valueColor||'#303732').text(indicator.value,x+12,y+33,{width:cardWidth-24,align:'left',lineBreak:false})
  })
  pdf.y=y+height+18
 }

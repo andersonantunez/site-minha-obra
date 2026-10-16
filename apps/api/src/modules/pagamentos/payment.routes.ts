@@ -16,8 +16,10 @@ import { validateBody } from '../../shared/validation.js'
 import { assignDocumentCategoryByName } from '../arquivos/document-categories.js'
 import { getSchedule } from '../etapas/schedule.service.js'
 import { createExpensePdf, createExpenseWorkbook, getExpenseCrudData, getExpenseReport } from '../despesas/expense-report.service.js'
-import { PAYMENT_STATUS, PAYMENT_STATUS_VALUES, type PaymentStatus } from './payment-status.js'
+import { PAYMENT_STATUS_VALUES, type PaymentStatus } from './payment-status.js'
 import { linkSchema, moveItemSchema, moveItemsSchema, paymentSchema, paymentStatusSchema, purchaseItemSchema, purchaseSchema } from './payment.schemas.js'
+import { requireFileUploadsEnabled } from '../../shared/uploads.js'
+import { getCashFlowData } from '../orcamento/cash-flow.service.js'
 
 const paymentImportSchema = z.object({
   formato: z.enum(['TSV', 'JSON']), conteudo: z.string().min(2), modo: z.enum(['ACRESCENTAR', 'SUBSTITUIR']).optional(), nomeArquivo: z.string().max(255).optional(),
@@ -137,6 +139,11 @@ paymentsRouter.get('/despesas', requireProjectPermission('pagamentos.visualizar'
   res.json(await getExpenseCrudData(req.acessoProjeto!.projetoId,{status,category,search,stageId}))
 })
 
+paymentsRouter.get('/despesas/indicadores-orcamento', requireProjectPermission('pagamentos.visualizar'), async (req, res) => {
+  const data = await getCashFlowData(req.acessoProjeto!.projetoId, { search: '', start: null, end: null, includeFuture: false }, { page: 1, pageSize: 1 })
+  res.json({ indicadores: data.indicadores })
+})
+
 // Kept temporarily for API consumers migrating from the former raw-query shape.
 paymentsRouter.get('/despesas-legado', requireProjectPermission('pagamentos.visualizar'), async (req, res) => {
   const projectId = req.acessoProjeto!.projetoId
@@ -222,11 +229,12 @@ paymentsRouter.put('/despesas/:compraId', requireProjectPermission('pagamentos.a
 
 paymentsRouter.patch('/despesas/:compraId/status', requireProjectPermission('pagamentos.atualizar'), validateBody(paymentStatusSchema), async (req,res)=>{
   const projectId=req.acessoProjeto!.projetoId;const purchaseId=Number(req.params.compraId)
-  const purchase=await query<{data_pagamento:string|null}>('SELECT data_pagamento FROM despesas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL',[purchaseId,projectId])
+  const purchase=await query('SELECT id FROM despesas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL',[purchaseId,projectId])
   if(!purchase.rows[0])throw new AppError(404,'Compra não encontrada.','COMPRA_NAO_ENCONTRADA')
-  if([PAYMENT_STATUS.PAGO_AGUARDANDO_ENTREGA,PAYMENT_STATUS.CONCLUIDO].includes(req.body.status)&&!purchase.rows[0].data_pagamento)throw new AppError(422,'Informe a data do pagamento antes de alterar para Pago - Aguardando Entrega ou Concluído.','DATA_PAGAMENTO_OBRIGATORIA')
-  await query('UPDATE despesas SET status=$3 WHERE id=$1 AND projeto_id=$2',[purchaseId,projectId,req.body.status])
-  res.status(204).end()
+  const { rows }=await query<{status:PaymentStatus;data_pagamento:string|null}>(`UPDATE despesas SET status=$3::varchar,
+    data_pagamento=CASE WHEN $3::varchar IN ('PAGO_AGUARDANDO_ENTREGA','CONCLUIDO') THEN COALESCE(data_pagamento,CURRENT_DATE) ELSE NULL END
+    WHERE id=$1 AND projeto_id=$2 RETURNING status,data_pagamento`,[purchaseId,projectId,req.body.status])
+  res.json({ despesa: rows[0] })
 })
 
 paymentsRouter.delete('/despesas/:compraId', requireProjectPermission('pagamentos.excluir'), async (req,res)=>{
@@ -395,7 +403,7 @@ paymentsRouter.get('/despesas/:compraId/documentos', requireProjectPermission('d
   res.json({documentos:rows})
 })
 
-paymentsRouter.post('/despesas/:compraId/documentos', requireProjectPermission('documentos.inserir'), documentUpload.single('arquivo'), async(req,res)=>{
+paymentsRouter.post('/despesas/:compraId/documentos', requireProjectPermission('documentos.inserir'), documentUpload.single('arquivo'), requireFileUploadsEnabled, async(req,res)=>{
   const purchaseId=Number(req.params.compraId);const projectId=req.acessoProjeto!.projetoId;const input=paymentDocumentSchema.parse(req.body)
   if(!req.file&&!input.url)throw new AppError(422,'Envie um arquivo ou informe um link.','FONTE_OBRIGATORIA')
   if(req.file&&input.url)throw new AppError(422,'Escolha arquivo ou link, não ambos.','FONTE_DUPLICADA')
@@ -414,7 +422,7 @@ paymentsRouter.post('/despesas/:compraId/documentos', requireProjectPermission('
   }
 })
 
-paymentsRouter.put('/despesas/:compraId/documentos/:documentoId', requireProjectPermission('documentos.atualizar'), documentUpload.single('arquivo'), async(req,res)=>{
+paymentsRouter.put('/despesas/:compraId/documentos/:documentoId', requireProjectPermission('documentos.atualizar'), documentUpload.single('arquivo'), requireFileUploadsEnabled, async(req,res)=>{
   const purchaseId=Number(req.params.compraId);const projectId=req.acessoProjeto!.projetoId;const input=paymentDocumentSchema.parse(req.body)
   if(req.file&&input.url)throw new AppError(422,'Escolha arquivo ou link, não ambos.','FONTE_DUPLICADA')
   const before=await query<{caminho_arquivo:string|null;url:string|null;tipo_origem:'ARQUIVO'|'LINK'}>(`SELECT d.caminho_arquivo,d.url,d.tipo_origem FROM documentos_projeto d JOIN despesas c ON c.id=d.compra_id WHERE d.id=$1 AND c.id=$2 AND c.projeto_id=$3 AND d.excluido_em IS NULL`,[Number(req.params.documentoId),purchaseId,projectId])
@@ -439,7 +447,7 @@ paymentsRouter.get('/:pagamentoId/documentos', requireProjectPermission('documen
   res.json({ documentos: documents.rows, documentos_legados_habilitados:item.rows[0]?.documentos_legados_habilitados??false })
 })
 
-paymentsRouter.post('/:pagamentoId/documentos', requireProjectPermission('documentos.inserir'), documentUpload.single('arquivo'), async (req, res) => {
+paymentsRouter.post('/:pagamentoId/documentos', requireProjectPermission('documentos.inserir'), documentUpload.single('arquivo'), requireFileUploadsEnabled, async (req, res) => {
   const paymentId = Number(req.params.pagamentoId)
   const input = paymentDocumentSchema.parse(req.body)
   if (!req.file && !input.url) throw new AppError(422, 'Envie um arquivo ou informe um link.', 'FONTE_OBRIGATORIA')

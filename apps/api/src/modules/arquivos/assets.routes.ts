@@ -9,6 +9,7 @@ import { requireProjectPermission } from '../../shared/projectAccess.js'
 import { readStoredFile, removeStoredFile, safeDownloadName, saveUploadedFile } from '../../shared/storage.js'
 import { validateHttpUrl } from '../../shared/url.js'
 import { assignDocumentCategoryByName, replaceDocumentCategories } from './document-categories.js'
+import { requireFileUploadsEnabled, requireUploadsEnabled } from '../../shared/uploads.js'
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: env.maxUploadBytes, files: 1 }, fileFilter: (_req, file, callback) => callback(null, ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(file.mimetype)) })
 const textOrNull = (max: number) => z.string().trim().max(max).optional().nullable().transform((value) => value || null)
@@ -151,7 +152,7 @@ assetsRouter.get('/documentos/apresentacao', requireProjectPermission('configura
   res.json({ documento: rows[0] || null })
 })
 
-assetsRouter.post('/documentos/apresentacao', requireProjectPermission('configuracoes.atualizar'), upload.single('arquivo'), async (req, res) => {
+assetsRouter.post('/documentos/apresentacao', requireProjectPermission('configuracoes.atualizar'), requireUploadsEnabled, upload.single('arquivo'), async (req, res) => {
   if (!req.file || !req.file.mimetype.startsWith('image/')) throw new AppError(422, 'Envie uma imagem JPEG, PNG ou WebP.', 'IMAGEM_APRESENTACAO_OBRIGATORIA')
   const stored = await saveUploadedFile(req.acessoProjeto!.projetoId, 'documentos', req.file)
   try {
@@ -179,7 +180,7 @@ assetsRouter.post('/documentos/apresentacao', requireProjectPermission('configur
   } catch (error) { await removeStoredFile(stored.relativePath); throw error }
 })
 
-assetsRouter.post('/documentos', requireProjectPermission('documentos.inserir'), upload.single('arquivo'), async (req, res) => {
+assetsRouter.post('/documentos', requireProjectPermission('documentos.inserir'), upload.single('arquivo'), requireFileUploadsEnabled, async (req, res) => {
   const input = documentSchema.parse(req.body)
   if (!req.file && !input.url) throw new AppError(422, 'Envie um arquivo ou informe um link.', 'FONTE_OBRIGATORIA')
   if (req.file && input.url) throw new AppError(422, 'Escolha arquivo ou link, não ambos.', 'FONTE_DUPLICADA')
@@ -203,7 +204,7 @@ assetsRouter.post('/documentos', requireProjectPermission('documentos.inserir'),
   } catch (error) { await removeStoredFile(stored?.relativePath); throw error }
 })
 
-assetsRouter.put('/documentos/:documentoId', requireProjectPermission('documentos.atualizar'), upload.single('arquivo'), async (req, res) => {
+assetsRouter.put('/documentos/:documentoId', requireProjectPermission('documentos.atualizar'), upload.single('arquivo'), requireFileUploadsEnabled, async (req, res) => {
   const input = documentSchema.parse(req.body)
   if (req.file && input.url) throw new AppError(422, 'Escolha arquivo ou link, não ambos.', 'FONTE_DUPLICADA')
   const before = await query<{ caminho_arquivo: string | null; url: string | null; tipo_origem: string; compra_id: number | null }>('SELECT caminho_arquivo,url,tipo_origem,compra_id FROM documentos_projeto WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL', [Number(req.params.documentoId), req.acessoProjeto!.projetoId])

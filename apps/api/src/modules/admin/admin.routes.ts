@@ -7,6 +7,7 @@ import { AppError } from '../../shared/errors.js'
 import { requireSystemAdmin } from '../../shared/projectAccess.js'
 import { validateBody } from '../../shared/validation.js'
 import { systemVariableSchema } from './system-variable.schemas.js'
+import { ensureUploadSettings } from '../../shared/uploads.js'
 
 export const adminRouter = Router()
 adminRouter.use(requireAuth, requireSystemAdmin)
@@ -68,6 +69,7 @@ adminRouter.get('/planos', async (_req, res) => {
 })
 
 adminRouter.get('/variaveis', async (_req, res) => {
+  await ensureUploadSettings()
   const { rows } = await query('SELECT id,chave,valor,descricao,atualizado_em FROM configuracoes_sistema ORDER BY chave')
   res.json({ variaveis: rows })
 })

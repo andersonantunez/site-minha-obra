@@ -10,6 +10,7 @@ import { projectArchiveSchema, projectInputSchema } from './project.schemas.js'
 import { parseProjectBackupJson } from './project-backup.schemas.js'
 import { exportProjectBackup, importProjectBackup } from './project-backup.service.js'
 import { createProject, listUserProjects } from './project.service.js'
+import { requireUploadsEnabled } from '../../shared/uploads.js'
 
 export const projectsRouter = Router()
 projectsRouter.use(requireAuth)
@@ -36,7 +37,7 @@ projectsRouter.get('/:projetoId/backup', requireProjectPermission('configuracoes
   res.send(JSON.stringify(backup,null,2))
 })
 
-projectsRouter.post('/:projetoId/backup/importar', requireProjectPermission('configuracoes.atualizar'), projectBackupUpload.single('arquivo'), async (req, res) => {
+projectsRouter.post('/:projetoId/backup/importar', requireProjectPermission('configuracoes.atualizar'), requireUploadsEnabled, projectBackupUpload.single('arquivo'), async (req, res) => {
   if (!req.file) throw new AppError(422, 'Selecione um arquivo JSON de backup.', 'BACKUP_ARQUIVO_AUSENTE')
   const result = await importProjectBackup(req.usuarioId!,parseProjectBackupJson(req.file.buffer.toString('utf8')),req.ip)
   res.status(201).json(result)

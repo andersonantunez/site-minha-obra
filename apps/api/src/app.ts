@@ -15,6 +15,7 @@ import { paymentsRouter } from './modules/pagamentos/payment.routes.js'
 import { permissionsRouter } from './modules/permissoes/permission.routes.js'
 import { projectsRouter } from './modules/projetos/project.routes.js'
 import { tasksRouter } from './modules/tarefas/task.routes.js'
+import { systemConfigRouter } from './modules/configuracoes/system-config.routes.js'
 import { errorHandler, notFoundHandler } from './shared/errors.js'
 
 export function createApp() {
@@ -31,6 +32,7 @@ export function createApp() {
     res.json({ status: 'ok', servico: 'minhaobra-api', banco: 'ok' })
   })
   app.use('/api/auth', authRouter)
+  app.use('/api/configuracoes', systemConfigRouter)
   app.use('/api/convites', invitationsRouter)
   app.use('/api/projetos', projectsRouter)
   app.use('/api/projetos/:projetoId/membros', membersRouter)

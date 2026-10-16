@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, CircleAlert, ExternalLink, FileText, Pencil, Search, Trash2, Upload, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, ExternalLink, FileText, Pencil, Search, Trash2, Upload, X } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { useParams } from 'react-router-dom'
 import { ImportDialog } from '../components/imports/ImportDialog'
 import { ExportAction } from '../components/ExportDialog'
-import { AddButton, EmptyState, ErrorNotice, MetricCard, PageHeader } from '../components/Ui'
+import { AddButton, EmptyState, ErrorNotice, PageHeader } from '../components/Ui'
 import { api, jsonBody } from '../lib/api'
 import { formatDate, formatMoney, formatQuantity } from '../lib/format'
 import { paymentStatusLabel, type PaymentStatus } from '../lib/paymentStatus'
@@ -12,6 +12,7 @@ import { SortableHeader } from '../components/Ui'
 import { useSortableData } from '../lib/sorting'
 import { useProjectAccess } from '../lib/projectAccess'
 import { expenseCategoryClass, expenseCategoryLabel, type ExpenseCategory } from '../lib/expenseCategory'
+import { CashFlowSummaryMetrics } from '../components/CashFlowSummaryMetrics'
 
 type CashFlowItem = { id: string; origem: 'MANUAL' | 'PAGAMENTO'; payment_record_type: 'COMPRA' | 'ITEM_ORFAO' | null; origem_id: number; data: string; descricao: string; detalhes: string | null; quantidade: string | null; unidade: string | null; fornecedor: string | null; categoria: ExpenseCategory | null; payment_status: PaymentStatus | null; data_agendamento: string | null; data_entrega: string | null; forma_pagamento: string | null; chave_pix: string | null; contato_fornecedor: string | null; nome_contato_fornecedor: string | null; payment_etapa: string | null; payment_observacao: string | null; valor: string | null; editavel: boolean; provisionado: boolean }
 type CashFlowData = { itens: CashFlowItem[]; total: number; indicadores: { total_entrada: string; total_saida: string; saldo_atual: string; saldo_com_provisao: string } }
@@ -43,14 +44,11 @@ export function BudgetPage() {
   const indicators = data?.indicadores
   const totalEntrada = Number(indicators?.total_entrada || 0)
   const totalSaida = Number(indicators?.total_saida || 0)
-  const budgetConsumption = totalEntrada > 0 ? (totalSaida / totalEntrada) * 100 : 0
-  const budgetTone = budgetConsumption >= 70 ? 'budget-danger' : budgetConsumption >= 50 ? 'budget-warning' : 'budget-ok'
-  const BudgetIcon = budgetConsumption >= 70 ? CircleAlert : budgetConsumption >= 50 ? AlertTriangle : CheckCircle2
 
   return <div>
     <PageHeader eyebrow="FINANCEIRO" title="Fluxo de Caixa" description="Entradas, saídas e pagamentos liquidados em uma única linha do tempo." action={<div className="heading-actions">{can('orcamento.exportar') && <ExportAction title="Fluxo de Caixa" pdfUrl={`/api${endpoint}/relatorio.pdf?${query}`} xlsxUrl={`/api${endpoint}/relatorio.xlsx?${query}`}/>} {can('orcamento.inserir') && <><button className="app-button" onClick={() => setImporting(true)}><Upload />Importar</button><AddButton onClick={() => setEditing('new')}>Novo lançamento</AddButton></>}</div>} />
     <div className="cash-flow-summary-heading"><div><strong>{includeFuture?'Com provisão':'Sem provisão'}</strong><span>{includeFuture?'Inclui valores com data futura.':'Considera somente lançamentos até hoje.'}</span></div><label className="future-toggle" title="Ao ativar, inclui lançamentos com data posterior a hoje: valores previstos para entrar ou sair do caixa da obra."><input type="checkbox" checked={includeFuture} onChange={event=>setIncludeFuture(event.target.checked)}/><span>Mostrar lançamentos futuros?</span></label></div>
-    <section className="metrics-row cash-flow-metrics"><MetricCard label="Entrada" value={formatMoney(indicators?.total_entrada)} tone="cash-in" /><MetricCard label="Saída" value={formatMoney(indicators?.total_saida)} tone="cash-out" /><MetricCard label="Saldo" value={formatMoney(includeFuture?indicators?.saldo_com_provisao:indicators?.saldo_atual)} /><article className={`metric-card ${budgetTone}`}><BudgetIcon aria-hidden="true"/><span>Consumo do orçamento</span><strong>{budgetConsumption.toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})}%</strong><small>{totalEntrada > 0 ? 'Saída em relação à entrada' : 'Sem entrada registrada'}</small></article></section>
+    <CashFlowSummaryMetrics totalEntrada={totalEntrada} totalSaida={totalSaida} saldo={Number(includeFuture?indicators?.saldo_com_provisao:indicators?.saldo_atual)||0}/>
     <section className="table-toolbar cash-flow-filters" aria-label="Filtros do fluxo de caixa"><label className="search-field"><span>Pesquisar</span><div><Search /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Descrição ou detalhes" /></div></label><label className="field compact"><span>Data de início</span><input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label><label className="field compact"><span>Data de fim</span><input type="date" min={startDate || undefined} value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label></section>
     {error && <ErrorNotice message={error.message} />}
     {!data?.itens.length ? <EmptyState title="Nenhum lançamento encontrado" description="Cadastre uma entrada ou saída manualmente, importe um arquivo ou ajuste os filtros." /> : <section className="data-table-wrap cash-flow-table-wrap"><div className="table-summary"><strong>{data.total}</strong> lançamentos no fluxo de caixa</div><table className="data-table cash-flow-table"><thead><tr><th aria-label="Expandir detalhes"/><SortableHeader<CashFlowItem> label="Data" column="data" activeColumn={flowSort.sort.key} direction={flowSort.sort.direction} onSort={flowSort.toggle}/><SortableHeader<CashFlowItem> label="Descrição" column="descricao" activeColumn={flowSort.sort.key} direction={flowSort.sort.direction} onSort={flowSort.toggle}/><SortableHeader<CashFlowItem> label="Categoria" column="categoria" activeColumn={flowSort.sort.key} direction={flowSort.sort.direction} onSort={flowSort.toggle}/><SortableHeader<CashFlowItem> label="Valor" column="valor" className="money-column" activeColumn={flowSort.sort.key} direction={flowSort.sort.direction} onSort={flowSort.toggle}/><SortableHeader<CashFlowItem> label="Provisionado" column="provisionado" activeColumn={flowSort.sort.key} direction={flowSort.sort.direction} onSort={flowSort.toggle}/><th>A&#199;&#213;ES</th></tr></thead><tbody>{flowSort.sorted.map((item) => <CashFlowRow key={item.id} projectId={projetoId} item={item} expanded={expanded === item.id} onExpand={() => setExpanded(expanded === item.id ? null : item.id)} canEdit={can('orcamento.atualizar')} canDelete={can('orcamento.excluir')} onEdit={() => setEditing(item)} onRemove={() => confirm('Excluir este lançamento?') && remove.mutate(item.origem_id)} />)}</tbody></table></section>}
