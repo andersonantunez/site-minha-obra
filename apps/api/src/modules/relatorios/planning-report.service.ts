@@ -57,8 +57,7 @@ export function createCashFlowPdf(report: Awaited<ReturnType<typeof getCashFlowR
  {label:'Fornecedor',width:130,value:r=>r.fornecedor||'—'},
  {label:'Categoria',width:105,value:r=>r.categoria||'—'},
  {label:'Valor',width:110,value:r=>formatMoney(r.valor),align:'right'},
- {label:'Provisionado',width:95,value:r=>r.provisionado?'Sim':'Não',align:'center'}])
- pdfReportTotal(pdf,'Total do Fluxo de Caixa',formatMoney(report.rows.reduce((total,row)=>total+Number(row.valor),0)))
+ {label:'Provisionado',width:95,value:r=>r.provisionado?'Sim':'Não',align:'center'}],{rowTextColor:row=>Number(row.valor)>0?'#176e9b':undefined,rowBold:row=>Number(row.valor)>0})
  return finishReportPdf(pdf)
 }
 
@@ -74,7 +73,7 @@ function pdfCashFlowBudgetCards(pdf: PDFKit.PDFDocument, report: Awaited<ReturnT
   {title:'Materiais',description:'Inclui materiais, frete, documentação e outros',budget:materialsBudget,spent:materialsSpent,color:'#66839a',background:'#e8eff3'},
   {title:'Consumo do orçamento',description:'Saída em relação à entrada',budget:entries,spent:exits,color:consumptionColor,background:consumption>=70?'#f8e5e2':consumption>=50?'#f8f0d9':'#e7f0e7',consumption:true},
  ]
- const left=36,width=770,gap=10,height=116
+ const left=36,width=770,gap=10,height=128
  if(pdf.y+height>530)pdf.addPage()
  const y=pdf.y,cardWidth=(width-gap*2)/3
  cards.forEach((card,index)=>{
@@ -88,15 +87,22 @@ function pdfCashFlowBudgetCards(pdf: PDFKit.PDFDocument, report: Awaited<ReturnT
   pdf.rect(x+12,y+53,cardWidth-24,7).fill('#d9d8d1')
   if(track>0)pdf.rect(x+12,y+53,(cardWidth-24)*track/100,7).fill(card.color)
   if(card.consumption){
-   pdf.font('Helvetica-Bold').fontSize(6.5).fillColor('#7b817c').text('COMPROMETIDO',x+12,y+76,{width:cardWidth-24,lineBreak:false})
-   pdf.font('Helvetica-Bold').fontSize(8.5).fillColor(card.color).text(formatMoney(card.spent),x+12,y+87,{width:cardWidth-24,lineBreak:false})
+   const committedX=x+cardWidth*.55,committedY=y+70,committedWidth=cardWidth*.39,committedHeight=48
+   pdf.rect(committedX,committedY,committedWidth,committedHeight).fill('#fbeceb')
+   pdf.lineWidth(.8).strokeColor('#efc8c4').rect(committedX,committedY,committedWidth,committedHeight).stroke()
+   pdf.font('Helvetica-Bold').fontSize(6.3).fillColor('#b54444').text('COMPROMETIDO',committedX+8,committedY+11,{width:committedWidth-16,lineBreak:false})
+   pdf.font('Helvetica-Bold').fontSize(10.5).fillColor('#b54444').text(formatMoney(card.spent),committedX+8,committedY+25,{width:committedWidth-16,lineBreak:false})
   }else{
    const difference=card.budget - card.spent
+   const realizedX=x+cardWidth*.55,realizedY=y+70,realizedWidth=cardWidth*.39,realizedHeight=48
+   pdf.rect(realizedX,realizedY,realizedWidth,realizedHeight).fill('#fbeceb')
+   pdf.lineWidth(.8).strokeColor('#efc8c4').rect(realizedX,realizedY,realizedWidth,realizedHeight).stroke()
    pdf.font('Helvetica-Bold').fontSize(6.3).fillColor('#7b817c').text('ORÇADO',x+12,y+74,{width:cardWidth*.42,lineBreak:false})
-   pdf.text('REALIZADO',x+cardWidth*.55,y+74,{width:cardWidth*.35,lineBreak:false})
    pdf.font('Helvetica-Bold').fontSize(8.5).fillColor('#303732').text(formatMoney(card.budget),x+12,y+84,{width:cardWidth*.42,lineBreak:false})
-   pdf.fillColor(card.color).text(formatMoney(card.spent),x+cardWidth*.55,y+84,{width:cardWidth*.35,lineBreak:false})
-   pdf.font('Helvetica').fontSize(6.3).fillColor('#7b817c').text(`Disponível: ${formatMoney(difference)}`,x+12,y+101,{width:cardWidth-24,lineBreak:false})
+   pdf.font('Helvetica-Bold').fontSize(6.3).fillColor('#b54444').text('VALOR REALIZADO',realizedX+8,realizedY+10,{width:realizedWidth-16,lineBreak:false})
+   pdf.font('Helvetica-Bold').fontSize(10.5).fillColor('#b54444').text(formatMoney(card.spent),realizedX+8,realizedY+22,{width:realizedWidth-16,lineBreak:false})
+   pdf.font('Helvetica-Bold').fontSize(6.3).fillColor('#7b817c').text('DIFERENÇA',x+12,y+104,{width:cardWidth*.42,lineBreak:false})
+   pdf.font('Helvetica-Bold').fontSize(8.5).fillColor('#303732').text(formatMoney(difference),x+12,y+114,{width:cardWidth*.42,lineBreak:false})
   }
  })
  pdf.y=y+height+18

@@ -62,7 +62,7 @@ export function pdfReportIndicators(pdf:PDFKit.PDFDocument,indicators:ReportIndi
  })
  pdf.y=y+height+18
 }
-export function pdfTable<T>(pdf:PDFKit.PDFDocument,rows:T[],columns:ReportColumn<T>[],options:{parent?:(row:T)=>boolean;keepNext?:(row:T)=>boolean;secondary?:boolean;rowBackground?:(row:T)=>string|undefined;rowTextColor?:(row:T)=>string|undefined}={}){
+export function pdfTable<T>(pdf:PDFKit.PDFDocument,rows:T[],columns:ReportColumn<T>[],options:{parent?:(row:T)=>boolean;keepNext?:(row:T)=>boolean;secondary?:boolean;rowBackground?:(row:T)=>string|undefined;rowTextColor?:(row:T)=>string|undefined;rowBold?:(row:T)=>boolean}={}){
  const left=36,width=columns.reduce((n,c)=>n+c.width,0),bottom=530,lineHeight=11
  const tableHeader=()=>{
   const y=pdf.y
@@ -95,7 +95,7 @@ export function pdfTable<T>(pdf:PDFKit.PDFDocument,rows:T[],columns:ReportColumn
   return lines
  }
  const cells=(row:T)=>columns.map(c=>[
-  ...wrap(c.value(row),c.width-10,options.parent?.(row)?'Helvetica-Bold':'Helvetica',8).map(text=>({text,secondary:false})),
+  ...wrap(c.value(row),c.width-10,(options.parent?.(row)||options.rowBold?.(row))?'Helvetica-Bold':'Helvetica',8).map(text=>({text,secondary:false})),
   ...(c.secondary?.(row)?wrap(c.secondary(row),c.width-10,'Helvetica',7).map(text=>({text,secondary:true})):[])
  ])
  if(pdf.y+56>bottom)pdf.addPage()
@@ -107,7 +107,7 @@ export function pdfTable<T>(pdf:PDFKit.PDFDocument,rows:T[],columns:ReportColumn
   let offset=0
   while(offset<lineCount){
    const count=Math.min(lineCount-offset,Math.max(1,Math.floor((bottom-pdf.y-14)/lineHeight)))
-   const h=Math.max(28,count*lineHeight+14),y=pdf.y,parent=options.parent?.(row)
+   const h=Math.max(28,count*lineHeight+14),y=pdf.y,parent=options.parent?.(row),rowBold=options.rowBold?.(row)
    const rowBackground=options.rowBackground?.(row)
    pdf.rect(left,y,width,h).fill(rowBackground||(parent?'#eae6df':index%2?'#f6f6f3':'#ffffff'))
    let x=left
@@ -122,8 +122,9 @@ export function pdfTable<T>(pdf:PDFKit.PDFDocument,rows:T[],columns:ReportColumn
     if(badgeColor)pdf.roundedRect(x+8,badgeY,c.width-16,badgeHeight,3).fill(badgeColor)
     const textY=badgeColor?badgeY+(badgeHeight-textHeight)/2:c.verticalAlign==='middle'?y+(h-textHeight)/2:y+7
     visibleLines.forEach((line,li)=>{
-     const color=c.textColor?.(row)||(cellBackground?c.cellTextColor?.(row)||reportContrastColor(cellBackground):rowBackground?options.rowTextColor?.(row)||reportContrastColor(rowBackground):badgeColor&&!line.secondary?c.badgeTextColor?.(row)||reportContrastColor(badgeColor):line.secondary?'#737a75':'#303732')
-     pdf.font(parent&&!line.secondary?'Helvetica-Bold':'Helvetica').fontSize(line.secondary?7:8).fillColor(color).text(line.text,x+5,textY+li*lineHeight,{width:c.width-10,align:c.align||'left',lineBreak:false})
+     const rowTextColor=options.rowTextColor?.(row)
+     const color=c.textColor?.(row)||(cellBackground?c.cellTextColor?.(row)||reportContrastColor(cellBackground):rowTextColor||(rowBackground?reportContrastColor(rowBackground):badgeColor&&!line.secondary?c.badgeTextColor?.(row)||reportContrastColor(badgeColor):line.secondary?'#737a75':'#303732'))
+     pdf.font((parent||rowBold)&&!line.secondary?'Helvetica-Bold':'Helvetica').fontSize(line.secondary?7:8).fillColor(color).text(line.text,x+5,textY+li*lineHeight,{width:c.width-10,align:c.align||'left',lineBreak:false})
     })
     x+=c.width
    })
