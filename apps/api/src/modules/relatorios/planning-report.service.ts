@@ -45,12 +45,13 @@ export function createCashFlowPdf(report: Awaited<ReturnType<typeof getCashFlowR
  const pdf=reportPdf('Fluxo de Caixa',report.project)
  const entries=report.rows.reduce((total,row)=>total+Math.max(0,Number(row.valor)),0)
  const exits=report.rows.reduce((total,row)=>total+Math.abs(Math.min(0,Number(row.valor))),0)
+ pdf.y+=10
+ pdfCashFlowBudgetCards(pdf,report,exits)
  pdfReportIndicators(pdf,[
   {label:'Entrada',value:formatMoney(entries),color:'#176e9b',valueColor:'#176e9b'},
   {label:'Saída',value:formatMoney(exits),color:'#b54444',valueColor:'#b54444'},
   {label:'Saldo',value:formatMoney(entries-exits),color:'#303732'},
  ])
- pdfCashFlowBudgetCards(pdf,report,entries,exits)
  pdfTable(pdf,report.rows,[
  {label:'Data',width:75,value:r=>formatDate(r.data),align:'center',verticalAlign:'middle'},
  {label:'Descrição',width:250,value:r=>r.descricao},
@@ -61,24 +62,23 @@ export function createCashFlowPdf(report: Awaited<ReturnType<typeof getCashFlowR
  return finishReportPdf(pdf)
 }
 
-function pdfCashFlowBudgetCards(pdf: PDFKit.PDFDocument, report: Awaited<ReturnType<typeof getCashFlowReport>>, entries: number, exits: number) {
+function pdfCashFlowBudgetCards(pdf: PDFKit.PDFDocument, report: Awaited<ReturnType<typeof getCashFlowReport>>, exits: number) {
  const laborSpent=report.rows.reduce((total,row)=>total+(row.categoria==='Mão de obra'?Math.abs(Math.min(0,Number(row.valor))):0),0)
  const materialsSpent=report.rows.reduce((total,row)=>total+(row.categoria&&row.categoria!=='Mão de obra'?Math.abs(Math.min(0,Number(row.valor))):0),0)
  const laborBudget=Number(report.project.orcamento_mao_obra||0)
  const materialsBudget=Number(report.project.orcamento_materiais||0)
- const consumption=entries>0?(exits/entries)*100:0
- const consumptionColor=consumption>=70?'#b54444':consumption>=50?'#8a691a':'#55715d'
- const cards: {title:string;description:string;budget:number;spent:number;color:string;background:string;consumption?:boolean}[]=[
+ const totalBudget=laborBudget+materialsBudget
+ const cards: {title:string;description:string;budget:number;spent:number;color:string;background:string}[]=[
+  {title:'Total da obra',description:'Mão de obra, Materiais, Frete, Documentação e Outros',budget:totalBudget,spent:exits,color:'#6f8d79',background:'#ffffff'},
   {title:'Mão de obra',description:'Despesas classificadas como mão de obra',budget:laborBudget,spent:laborSpent,color:'#8d765a',background:'#f1e9df'},
   {title:'Materiais',description:'Inclui materiais, frete, documentação e outros',budget:materialsBudget,spent:materialsSpent,color:'#66839a',background:'#e8eff3'},
-  {title:'Consumo do orçamento',description:'Saída em relação à entrada',budget:entries,spent:exits,color:consumptionColor,background:consumption>=70?'#f8e5e2':consumption>=50?'#f8f0d9':'#e7f0e7',consumption:true},
  ]
  const left=36,width=770,gap=10,height=128
  if(pdf.y+height>530)pdf.addPage()
  const y=pdf.y,cardWidth=(width-gap*2)/3
  cards.forEach((card,index)=>{
   const x=left+index*(cardWidth+gap)
-  const percentage=card.consumption?consumption:card.budget>0?(card.spent/card.budget)*100:0
+  const percentage=card.budget>0?(card.spent/card.budget)*100:0
   const track=Math.min(100,Math.max(0,percentage))
   pdf.roundedRect(x,y,cardWidth,height,4).fill(card.background)
   pdf.font('Helvetica-Bold').fontSize(9).fillColor('#303732').text(card.title,x+12,y+12,{width:cardWidth-72,lineBreak:false})
@@ -86,18 +86,12 @@ function pdfCashFlowBudgetCards(pdf: PDFKit.PDFDocument, report: Awaited<ReturnT
   pdf.font('Helvetica').fontSize(7.2).fillColor('#69716c').text(card.description,x+12,y+29,{width:cardWidth-24,lineBreak:false})
   pdf.rect(x+12,y+53,cardWidth-24,7).fill('#d9d8d1')
   if(track>0)pdf.rect(x+12,y+53,(cardWidth-24)*track/100,7).fill(card.color)
-  if(card.consumption){
-   const committedX=x+cardWidth*.55,committedY=y+70,committedWidth=cardWidth*.39,committedHeight=48
-   pdf.rect(committedX,committedY,committedWidth,committedHeight).fill('#fbeceb')
-   pdf.lineWidth(.8).strokeColor('#efc8c4').rect(committedX,committedY,committedWidth,committedHeight).stroke()
-   pdf.font('Helvetica-Bold').fontSize(6.3).fillColor('#b54444').text('COMPROMETIDO',committedX+8,committedY+11,{width:committedWidth-16,lineBreak:false})
-   pdf.font('Helvetica-Bold').fontSize(10.5).fillColor('#b54444').text(formatMoney(card.spent),committedX+8,committedY+25,{width:committedWidth-16,lineBreak:false})
-  }else{
+  {
    const difference=card.budget - card.spent
    const realizedX=x+cardWidth*.55,realizedY=y+70,realizedWidth=cardWidth*.39,realizedHeight=48
    pdf.rect(realizedX,realizedY,realizedWidth,realizedHeight).fill('#fbeceb')
    pdf.lineWidth(.8).strokeColor('#efc8c4').rect(realizedX,realizedY,realizedWidth,realizedHeight).stroke()
-   pdf.font('Helvetica-Bold').fontSize(6.3).fillColor('#7b817c').text('ORÇADO',x+12,y+74,{width:cardWidth*.42,lineBreak:false})
+   pdf.font('Helvetica-Bold').fontSize(6.3).fillColor('#7b817c').text('VALOR ORÇADO',x+12,y+74,{width:cardWidth*.42,lineBreak:false})
    pdf.font('Helvetica-Bold').fontSize(8.5).fillColor('#303732').text(formatMoney(card.budget),x+12,y+84,{width:cardWidth*.42,lineBreak:false})
    pdf.font('Helvetica-Bold').fontSize(6.3).fillColor('#b54444').text('VALOR REALIZADO',realizedX+8,realizedY+10,{width:realizedWidth-16,lineBreak:false})
    pdf.font('Helvetica-Bold').fontSize(10.5).fillColor('#b54444').text(formatMoney(card.spent),realizedX+8,realizedY+22,{width:realizedWidth-16,lineBreak:false})
