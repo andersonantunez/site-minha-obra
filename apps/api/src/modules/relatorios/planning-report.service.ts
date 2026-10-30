@@ -45,12 +45,15 @@ export function createCashFlowPdf(report: Awaited<ReturnType<typeof getCashFlowR
  const pdf=reportPdf('Fluxo de Caixa',report.project)
  const entries=report.rows.reduce((total,row)=>total+Math.max(0,Number(row.valor)),0)
  const exits=report.rows.reduce((total,row)=>total+Math.abs(Math.min(0,Number(row.valor))),0)
+ const budgetConsumption=entries>0?(exits/entries)*100:0
+ const budgetConsumptionColor=budgetConsumption>=70?'#b54444':budgetConsumption>=50?'#8d765a':'#6f8d79'
  pdf.y+=10
  pdfCashFlowBudgetCards(pdf,report,exits)
  pdfReportIndicators(pdf,[
   {label:'Entrada',value:formatMoney(entries),color:'#176e9b',valueColor:'#176e9b'},
   {label:'Saída',value:formatMoney(exits),color:'#b54444',valueColor:'#b54444'},
   {label:'Saldo',value:formatMoney(entries-exits),color:'#303732'},
+  {label:'Consumo do orçamento',value:`${budgetConsumption.toFixed(1).replace('.',',')}%`,color:budgetConsumptionColor,valueColor:budgetConsumptionColor},
  ])
  pdfTable(pdf,report.rows,[
  {label:'Data',width:75,value:r=>formatDate(r.data),align:'center',verticalAlign:'middle'},
