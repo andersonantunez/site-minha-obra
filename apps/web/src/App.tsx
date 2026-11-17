@@ -20,6 +20,7 @@ const ProjectsPage = lazy(() => import('./pages/ProjectsPage').then((module) => 
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((module) => ({ default: module.SettingsPage })))
 const StagesPage = lazy(() => import('./pages/StagesPage').then((module) => ({ default: module.StagesPage })))
 const TasksPage = lazy(() => import('./pages/TasksPage').then((module) => ({ default: module.TasksPage })))
+const SuppliersPage = lazy(() => import('./pages/SuppliersPage').then((module) => ({ default: module.SuppliersPage })))
 
 const Loading = () => <div className="route-loading"><span /><p>Carregando…</p></div>
 
@@ -40,6 +41,7 @@ export function App() {
         <Route path="tarefas" element={<ProjectPermissionRoute permission="tarefas.visualizar"><TasksPage /></ProjectPermissionRoute>} />
         <Route path="pagamentos" element={<Navigate to="../despesas" replace />} />
         <Route path="despesas" element={<ProjectPermissionRoute permission="pagamentos.visualizar"><ExpensesPage /></ProjectPermissionRoute>} />
+        <Route path="fornecedores" element={<ProjectPermissionRoute permission="pagamentos.visualizar"><SuppliersPage /></ProjectPermissionRoute>} />
         <Route path="indicadores" element={<Navigate to=".." replace />} />
         <Route path="renders" element={<Navigate to="../documentos" replace />} />
         <Route path="plantas" element={<Navigate to="../documentos" replace />} />

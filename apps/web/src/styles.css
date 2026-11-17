@@ -1100,6 +1100,23 @@ table td > small { font-size:10px; font-weight:500; }
 .purchase-form-section { padding:16px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; border:1px solid #dfded8; background:#f8f6f1; }
 .purchase-form-section.classification-section { grid-template-columns:repeat(3,minmax(0,1fr)); }
 .purchase-form-section .span-3 { grid-column:1/-1; }
+.supplier-document-row { grid-column:1/-1; display:grid; grid-template-columns:120px minmax(180px,.8fr) minmax(0,1.8fr); gap:12px; }
+.suppliers-table th:nth-child(3),.suppliers-table td:nth-child(3),.suppliers-table th:nth-child(5),.suppliers-table td:nth-child(5),.suppliers-table th:nth-child(6),.suppliers-table td:nth-child(6) { text-align:center; }
+.suppliers-table td:nth-child(2) small { display:block; margin-top:3px; }
+.suppliers-table td:nth-child(2) small a { color:#806a50; }
+.supplier-table-phone { display:inline-flex; align-items:center; justify-content:center; gap:7px; white-space:nowrap; }
+.supplier-table-phone a { width:25px; height:25px; display:grid; place-items:center; border-radius:50%; color:#fff; background:#25d366; }
+.supplier-table-phone a:hover { background:#1eae53; }
+.supplier-table-phone svg { width:14px; height:14px; stroke-width:2; }
+.supplier-phone-edit { display:grid; grid-template-columns:110px minmax(0,1fr); gap:8px; }
+.supplier-select-with-action { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:10px; }
+.selected-supplier-fields { grid-column:1/-1; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.selected-supplier-fields input:disabled,.selected-supplier-fields textarea:disabled { color:#4f5751; background:#eeece6; opacity:1; }
+.supplier-phone-display { position:relative; }
+.supplier-phone-display > input { padding-right:42px; }
+.supplier-whatsapp-button { position:absolute; top:50%; right:8px; width:28px; height:28px; display:grid; place-items:center; transform:translateY(-50%); border-radius:50%; color:#fff; background:#25d366; }
+.supplier-whatsapp-button:hover { background:#1eae53; }
+.supplier-whatsapp-button svg { width:16px; height:16px; stroke-width:2; }
 .purchase-form-section h3 { grid-column:1/-1; margin:0 0 2px; color:#806a50; font-size:9px; letter-spacing:.11em; text-transform:uppercase; }
 .payment-values-layout { grid-column:1/-1; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); align-items:end; gap:12px; }
 .payment-values-layout > .discount-field { margin-bottom:12px; }
@@ -1152,7 +1169,7 @@ table td > small { font-size:10px; font-weight:500; }
 .legacy-item-context p span { color:#8a8f8a; font-size:7px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; }
 .legacy-item-context p strong { overflow-wrap:anywhere; color:#434a45; font-size:9px; font-weight:600; }
 @media (max-width:760px) {
-  .purchase-form-section,.purchase-form-section.classification-section,.payment-values-row,.payment-values-layout { grid-template-columns:1fr; }
+  .purchase-form-section,.purchase-form-section.classification-section,.payment-values-row,.payment-values-layout,.supplier-document-row,.supplier-select-with-action,.selected-supplier-fields { grid-template-columns:1fr; }
   .payment-values-layout > .discount-field { margin-bottom:0; }
   .purchase-form-section h3,.purchase-form-section .span-2,.purchase-form-section .span-3 { grid-column:auto; }
   .purchase-items-panel { margin:10px; }

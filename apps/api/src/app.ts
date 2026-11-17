@@ -15,6 +15,7 @@ import { paymentsRouter } from './modules/pagamentos/payment.routes.js'
 import { permissionsRouter } from './modules/permissoes/permission.routes.js'
 import { projectsRouter } from './modules/projetos/project.routes.js'
 import { tasksRouter } from './modules/tarefas/task.routes.js'
+import { suppliersRouter } from './modules/fornecedores/supplier.routes.js'
 import { systemConfigRouter } from './modules/configuracoes/system-config.routes.js'
 import { errorHandler, notFoundHandler } from './shared/errors.js'
 
@@ -42,6 +43,7 @@ export function createApp() {
   app.use('/api/projetos/:projetoId/fluxo-caixa', budgetRouter)
   app.use('/api/projetos/:projetoId/pagamentos', paymentsRouter)
   app.use('/api/projetos/:projetoId/despesas', expensesRouter)
+  app.use('/api/projetos/:projetoId/fornecedores', suppliersRouter)
   app.use('/api/projetos/:projetoId/permissoes', permissionsRouter)
   app.use('/api/projetos/:projetoId/tarefas', tasksRouter)
   app.use('/api/projetos/:projetoId/acervo', assetsRouter)

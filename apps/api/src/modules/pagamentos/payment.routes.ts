@@ -40,6 +40,14 @@ async function ensureStage(projectId: number, stageId?: number | null) {
   if (!rowCount) throw new AppError(422, 'A etapa não pertence ao projeto.', 'ETAPA_INVALIDA')
 }
 
+async function expenseSupplier(projectId:number,supplierId?:number|null) {
+  if(!supplierId)return null
+  const result=await query<{id:number;nome:string;telefone:string|null;nome_funcionario:string|null}>(`SELECT id,nome,telefone,nome_funcionario
+    FROM fornecedores WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL`,[supplierId,projectId])
+  if(!result.rows[0])throw new AppError(422,'O fornecedor selecionado não pertence ao projeto.','FORNECEDOR_INVALIDO')
+  return result.rows[0]
+}
+
 async function expenseImportReferenceErrors(projectId:number, parsed:ReturnType<typeof parseExpenseImport>) {
   const [stages,documentTypes]=await Promise.all([
     query<{nome:string}>(`SELECT nome FROM cronogramas WHERE projeto_id=$1 AND parent_id IS NULL AND excluido_em IS NULL`,[projectId]),
@@ -196,13 +204,14 @@ paymentsRouter.get('/despesas-legado', requireProjectPermission('pagamentos.visu
 paymentsRouter.post('/despesas', requireProjectPermission('pagamentos.inserir'), validateBody(purchaseSchema), async (req, res) => {
   const projectId = req.acessoProjeto!.projetoId
   await ensureStage(projectId, req.body.etapa_id)
+  const supplier=await expenseSupplier(projectId,req.body.fornecedor_id)
   const purchase = await withTransaction(async (client) => {
     const { rows } = await client.query<{ id: number }>(`INSERT INTO despesas
-      (projeto_id,descricao,etapa_id,status,categoria,data_pagamento,forma_pagamento,fornecedor,nome_contato_fornecedor,
+      (projeto_id,descricao,etapa_id,status,categoria,data_pagamento,forma_pagamento,fornecedor_id,fornecedor,nome_contato_fornecedor,
        contato_fornecedor,observacao,incluir_itens,valor_total_manual,valor_desconto,numero_nota_fiscal,data_emissao,data_agendamento,data_entrega,ordem,criado_por)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING id`, [projectId,req.body.descricao,
-      req.body.etapa_id,req.body.status,req.body.categoria,req.body.data_pagamento,req.body.forma_pagamento,req.body.fornecedor,
-      req.body.nome_contato_fornecedor,req.body.contato_fornecedor,req.body.observacao,req.body.incluir_itens,req.body.incluir_itens?null:req.body.valor_total_manual,req.body.valor_desconto,req.body.numero_nota_fiscal,req.body.data_emissao,
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING id`, [projectId,req.body.descricao,
+      req.body.etapa_id,req.body.status,req.body.categoria,req.body.data_pagamento,req.body.forma_pagamento,supplier?.id||null,supplier?.nome||null,
+      supplier?.nome_funcionario||null,supplier?.telefone||null,req.body.observacao,req.body.incluir_itens,req.body.incluir_itens?null:req.body.valor_total_manual,req.body.valor_desconto,req.body.numero_nota_fiscal,req.body.data_emissao,
       req.body.data_agendamento,req.body.data_entrega,req.body.ordem,req.usuarioId])
     await recordAudit(client,{projetoId:projectId,usuarioId:req.usuarioId!,acao:'COMPRA_CRIADA',entidade:'compras',registroId:rows[0]!.id,dadosNovos:req.body,enderecoIp:req.ip})
     return rows[0]
@@ -213,15 +222,16 @@ paymentsRouter.post('/despesas', requireProjectPermission('pagamentos.inserir'),
 paymentsRouter.put('/despesas/:compraId', requireProjectPermission('pagamentos.atualizar'), validateBody(purchaseSchema), async (req, res) => {
   const projectId = req.acessoProjeto!.projetoId;const purchaseId=Number(req.params.compraId)
   await ensureStage(projectId, req.body.etapa_id)
+  const supplier=await expenseSupplier(projectId,req.body.fornecedor_id)
   await withTransaction(async (client) => {
     const before=await client.query('SELECT * FROM despesas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL FOR UPDATE',[purchaseId,projectId])
     if(!before.rows[0])throw new AppError(404,'Compra não encontrada.','COMPRA_NAO_ENCONTRADA')
     if(!req.body.incluir_itens){const items=await client.query('SELECT 1 FROM pagamentos WHERE compra_id=$1 AND excluido_em IS NULL LIMIT 1',[purchaseId]);if(items.rowCount)throw new AppError(422,'Para desabilitar a inclusão de itens, remova primeiro todos os itens da despesa.','DESPESA_COM_ITENS')}
-    await client.query(`UPDATE despesas SET descricao=$3,etapa_id=$4,status=$5,categoria=$6,data_pagamento=$7,forma_pagamento=$8,fornecedor=$9,
-      nome_contato_fornecedor=$10,contato_fornecedor=$11,observacao=$12,incluir_itens=$13,valor_total_manual=$14,valor_desconto=$15,numero_nota_fiscal=$16,data_emissao=$17,data_agendamento=$18,
-      data_entrega=$19,ordem=$20 WHERE id=$1 AND projeto_id=$2`,[purchaseId,projectId,req.body.descricao,req.body.etapa_id,
-      req.body.status,req.body.categoria,req.body.data_pagamento,req.body.forma_pagamento,req.body.fornecedor,req.body.nome_contato_fornecedor,
-      req.body.contato_fornecedor,req.body.observacao,req.body.incluir_itens,req.body.incluir_itens?null:req.body.valor_total_manual,req.body.valor_desconto,req.body.numero_nota_fiscal,req.body.data_emissao,req.body.data_agendamento,req.body.data_entrega,req.body.ordem])
+    await client.query(`UPDATE despesas SET descricao=$3,etapa_id=$4,status=$5,categoria=$6,data_pagamento=$7,forma_pagamento=$8,fornecedor_id=$9,fornecedor=$10,
+      nome_contato_fornecedor=$11,contato_fornecedor=$12,observacao=$13,incluir_itens=$14,valor_total_manual=$15,valor_desconto=$16,numero_nota_fiscal=$17,data_emissao=$18,data_agendamento=$19,
+      data_entrega=$20,ordem=$21 WHERE id=$1 AND projeto_id=$2`,[purchaseId,projectId,req.body.descricao,req.body.etapa_id,
+      req.body.status,req.body.categoria,req.body.data_pagamento,req.body.forma_pagamento,supplier?.id||null,supplier?.nome||null,supplier?.nome_funcionario||null,
+      supplier?.telefone||null,req.body.observacao,req.body.incluir_itens,req.body.incluir_itens?null:req.body.valor_total_manual,req.body.valor_desconto,req.body.numero_nota_fiscal,req.body.data_emissao,req.body.data_agendamento,req.body.data_entrega,req.body.ordem])
     await recordAudit(client,{projetoId:projectId,usuarioId:req.usuarioId!,acao:'COMPRA_ATUALIZADA',entidade:'compras',registroId:purchaseId,dadosAnteriores:before.rows[0],dadosNovos:req.body,enderecoIp:req.ip})
   })
   res.status(204).end()
@@ -229,8 +239,9 @@ paymentsRouter.put('/despesas/:compraId', requireProjectPermission('pagamentos.a
 
 paymentsRouter.patch('/despesas/:compraId/status', requireProjectPermission('pagamentos.atualizar'), validateBody(paymentStatusSchema), async (req,res)=>{
   const projectId=req.acessoProjeto!.projetoId;const purchaseId=Number(req.params.compraId)
-  const purchase=await query('SELECT id FROM despesas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL',[purchaseId,projectId])
+  const purchase=await query<{id:number;forma_pagamento:string|null}>('SELECT id,forma_pagamento FROM despesas WHERE id=$1 AND projeto_id=$2 AND excluido_em IS NULL',[purchaseId,projectId])
   if(!purchase.rows[0])throw new AppError(404,'Compra não encontrada.','COMPRA_NAO_ENCONTRADA')
+  if(['PAGO_AGUARDANDO_ENTREGA','CONCLUIDO'].includes(req.body.status)&&!purchase.rows[0].forma_pagamento)throw new AppError(422,'Informe a forma de pagamento antes de concluir a despesa.','FORMA_PAGAMENTO_OBRIGATORIA')
   const { rows }=await query<{status:PaymentStatus;data_pagamento:string|null}>(`UPDATE despesas SET status=$3::varchar,
     data_pagamento=CASE WHEN $3::varchar IN ('PAGO_AGUARDANDO_ENTREGA','CONCLUIDO') THEN COALESCE(data_pagamento,CURRENT_DATE) ELSE NULL END
     WHERE id=$1 AND projeto_id=$2 RETURNING status,data_pagamento`,[purchaseId,projectId,req.body.status])

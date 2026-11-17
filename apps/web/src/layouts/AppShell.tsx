@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import {
   Building2, CalendarRange, Check, CheckSquare2, Copy, FileText,
-  Landmark, LayoutDashboard, Menu, ReceiptText, Settings, ShieldCheck, Tags, Users, X,
+  Landmark, LayoutDashboard, Menu, ReceiptText, Settings, ShieldCheck, Tags, Truck, Users, X,
 } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom'
@@ -21,6 +21,7 @@ const navigation: { group?: string; items: { label: string; icon: typeof LayoutD
     { label: 'Tarefas', icon: CheckSquare2, path: 'tarefas', permission: 'tarefas.visualizar' },
   ] },
   { group: 'FINANCEIRO', items: [
+    { label: 'Fornecedores', icon: Truck, path: 'fornecedores', permission: 'pagamentos.visualizar' },
     { label: 'Fluxo de Caixa', icon: Landmark, path: 'fluxo-caixa', permission: 'orcamento.visualizar' },
     { label: 'Despesas', icon: ReceiptText, path: 'despesas', permission: 'pagamentos.visualizar' },
   ] },

@@ -39,6 +39,7 @@ export const purchaseSchema = z.object({
   categoria: z.enum(EXPENSE_CATEGORY_VALUES).optional().nullable(),
   data_pagamento: optionalDate,
   forma_pagamento: z.enum(['PIX', 'CARTAO', 'DINHEIRO', 'BOLETO', 'TRANSFERENCIA', 'OUTRO']).optional().nullable(),
+  fornecedor_id: z.coerce.number().int().positive('Selecione um fornecedor.'),
   fornecedor: optionalText(180),
   nome_contato_fornecedor: optionalText(180),
   contato_fornecedor: supplierPhone,
@@ -53,6 +54,7 @@ export const purchaseSchema = z.object({
   ordem: z.coerce.number().int().min(0).max(999_999).default(0),
 }).superRefine((value, context) => {
   if (SETTLED_PAYMENT_STATUSES.includes(value.status) && !value.data_pagamento) context.addIssue({ code: 'custom', path: ['data_pagamento'], message: 'A data do pagamento é obrigatória para os status Pago - Aguardando Entrega e Concluído.' })
+  if (SETTLED_PAYMENT_STATUSES.includes(value.status) && !value.forma_pagamento) context.addIssue({ code: 'custom', path: ['forma_pagamento'], message: 'Informe a forma de pagamento para os status Pago - Aguardando Entrega e Concluído.' })
   if (!value.incluir_itens && !value.valor_total_manual) context.addIssue({ code: 'custom', path: ['valor_total_manual'], message: 'Informe um valor total maior que zero.' })
 })
 
