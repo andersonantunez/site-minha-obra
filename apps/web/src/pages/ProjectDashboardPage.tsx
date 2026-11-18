@@ -272,10 +272,10 @@ export function ProjectDashboardPage() {
         </article>
 
         <article className="dashboard-panel overview-supplier-panel">
-          <DashboardPanelHeader eyebrow="CONCENTRAÇÃO DOS PAGAMENTOS" title="Pagamentos por fornecedor" help="Soma os pagamentos efetivos por fornecedor, para identificar quem recebeu os maiores valores." helpId="help-suppliers" />
+          <DashboardPanelHeader eyebrow="CONCENTRAÇÃO DOS PAGAMENTOS" title="Pagamentos por prestador" help="Soma os pagamentos efetivos por prestador, para identificar quem recebeu os maiores valores." helpId="help-suppliers" />
           {supplierPayments.length ? <ResponsiveContainer width="100%" height={280}>
             <BarChart data={supplierPayments} layout="vertical" margin={{ top: 8, right: 18, left: 0, bottom: 8 }}><CartesianGrid stroke="#e7e4dc" horizontal={false} /><XAxis type="number" tickFormatter={(value) => `${Math.round(Number(value) / 1000)} mil`} tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: '#8b8f8c' }} /><YAxis type="category" dataKey="fornecedor" width={120} tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: '#747975' }} /><RechartsTooltip formatter={(value) => [formatMoney(Number(value)), 'Total pago']} /><Bar dataKey="total" name="Total pago" radius={[0, 3, 3, 0]} maxBarSize={28}>{supplierPayments.map(item=><Cell key={item.fornecedor} fill={item.color}/>)}</Bar></BarChart>
-          </ResponsiveContainer> : <EmptyState title="Sem pagamentos por fornecedor" description="Os fornecedores aparecerão quando houver pagamentos efetivos registrados." />}
+          </ResponsiveContainer> : <EmptyState title="Sem pagamentos por prestador" description="Os prestadores aparecerão quando houver pagamentos efetivos registrados." />}
         </article>
 
         <article className="dashboard-panel overview-monthly-panel">

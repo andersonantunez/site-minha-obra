@@ -174,7 +174,7 @@ export function LandingPage() {
           <div className="insight-copy">
             <span className="kicker"><i /> Indicadores que ajudam a decidir</span>
             <h2>Entenda para onde o dinheiro está indo.</h2>
-            <p>Compare o fluxo previsto e realizado, acompanhe a evolução mensal e identifique as etapas, fornecedores e compromissos que mais impactam o projeto.</p>
+            <p>Compare o fluxo previsto e realizado, acompanhe a evolução mensal e identifique as etapas, prestadores e compromissos que mais impactam o projeto.</p>
             <ul>
               <li><Check size={17} /> Gastos por mês e por etapa</li>
               <li><Check size={17} /> Pagamentos futuros e realizados</li>

@@ -13,6 +13,7 @@ export const supplierSchema = z.object({
   observacoes: optionalText(4_000),
   site: z.union([z.url().max(4_000), z.literal(''), z.null()]).optional().transform(value => value || null),
   chave_pix: optionalText(255),
+  especialidades: z.array(z.string().trim().min(1).max(80)).max(20).optional().default([]).transform(values => [...new Set(values.map(value => value.trim()).filter(Boolean))]),
 }).superRefine((value, context) => {
   const expected = value.tipo_documento === 'CPF' ? 11 : 14
   if (value.numero_documento.length !== expected) context.addIssue({ code: 'custom', path: ['numero_documento'], message: `Informe um ${value.tipo_documento} com ${expected} dígitos.` })
